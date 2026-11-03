@@ -1,41 +1,23 @@
-# CBT HUB
+# CBT HUB School Edition
 
-Offline/local-network computer-based testing starter system for Windows laptops and Android phones.
+## Project files
+- `server.js` — backend API and server
+- `package.json` — Node dependencies and start command
+- `render.yaml` — Render deployment settings
+- `public/index.html`, `public/app.js`, `public/style.css` — frontend
+- `README.md` — instructions
 
-## Included
-- First-run administrator setup and separate teacher accounts.
-- Create exams with a question bank of up to 1,000 MCQs.
-- Choose how many questions each student receives; the server randomizes the selection.
-- Question editor includes image upload and a drawing canvas (pen, eraser, line, rectangle, circle, clear and undo). Drawings are attached to the question and shown to students.
-- Exam codes, student names, automatic MCQ marking and saved results.
-- Admin timer controls: start, pause, resume and stop.
-- Student leave/re-entry approval and prevention of a second completed attempt under the same exam/name.
-- Results and exam data saved on the hosting device.
+## Upload to GitHub
+Upload all files and folders, preserving the `public` folder. Do not upload `node_modules` or a live `data/db.json`.
 
-## Windows laptop
-1. Install Node.js 18 or newer from https://nodejs.org/.
-2. Extract this folder.
-3. Open Command Prompt in this folder.
-4. Run `npm install`
-5. Run `npm start`
-6. Open `http://localhost:3000` on the laptop. The terminal prints the local Wi-Fi/hotspot address for students.
+## Deploy
+Connect the GitHub repository to Render as a Web Service. Build command: `npm install`. Start command: `npm start`. The included `render.yaml` supplies these settings and a generated session secret.
 
-## Android host (Termux)
-1. Install Termux from its official F-Droid/GitHub distribution.
-2. Run `pkg update && pkg install nodejs`.
-3. Put this project folder in Termux storage (or clone your GitHub repository).
-4. In the project directory run `npm install` then `npm start`.
-5. Open `http://localhost:3000` on the phone. Share the printed LAN address with students connected to the same hotspot.
+## Local Android / laptop
+Install Node.js 18+, run `npm install`, then `npm start`. Open `http://localhost:3000`. For local hotspot exams, student devices must connect to the same Wi-Fi/hotspot and open the host phone's LAN IP on port 3000.
 
-## First use
-The first visitor creates the administrator username and password. Admin then signs in and creates teacher accounts. Keep account passwords private. Students do not need accounts; they need the exam code.
+## Included starter features
+First admin setup; hashed passwords; admin-created teacher/student accounts; teacher approval and individual question permission; reusable question bank; shared class exam codes with expiry; student accounts; one submitted attempt per student per exam; admin start/pause/resume/end; monitoring status endpoint; connected answer autosave; objective marking and results; admin retake approval endpoint.
 
-## Storage and moving between devices
-All data is saved in `data/db.json` on the host. Back it up. The laptop and phone do not synchronize automatically. To move the system, stop the server and copy the project folder including `data/db.json` to the other device.
-
-## Important notes
-- GitHub is used to store/share the source code; GitHub Pages alone cannot run this shared offline exam server. The Node.js server must run on the laptop or phone.
-- Only one host device runs a given session at a time. Use a private hotspot/router and keep the host on charge.
-- The 100-student target needs a real load test on the chosen host and Wi-Fi equipment before a live exam. A phone hotspot may not reliably handle 100 simultaneous devices.
-- This is a functional starter, not a certified high-stakes exam platform. The timer display is server-controlled but candidates' answers are submitted from their browser; further hardening, backups and load testing are recommended before formal use.
-- The app stores uploaded images/drawings as data in the local JSON database. Avoid extremely large image files.
+## Important limitations
+This is a starter, not a certified exam platform. JSON storage is not durable on free Render and is not suitable for concurrent production school records. Configure PostgreSQL/persistent storage and backups before real use. Autosave requires network connectivity; this is not full offline-first synchronization. Monitoring is basic status reporting, not proctoring. Timer auto-submit, re-entry approval UI, CSV/PDF reports, rankings, class averages, audit logs, rate limiting, CSRF protection, durable session storage and load testing remain to be completed before formal exams. Render hosting requires internet; offline hotspot exams need the local phone/laptop server.
