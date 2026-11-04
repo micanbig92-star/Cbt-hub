@@ -684,6 +684,32 @@ app.get("/api/offline/sync-status", requireAdmin, (req, res) => {
     syncedResults: synced.length,
     totalSubmitted: pending.length + synced.length
   });
+});// OFFLINE MODE: Export submitted results for backup
+app.get("/api/offline/export-results", requireAdmin, (req, res) => {
+  const results = db.attempts
+    .filter(attempt => attempt.submitted && attempt.result)
+    .map(attempt => ({
+      attemptId: attempt.id,
+      examId: attempt.examId,
+      studentId: attempt.studentId,
+      student: attempt.student,
+      result: attempt.result,
+      syncStatus: attempt.syncStatus || "pending",
+      syncedAt: attempt.syncedAt || null
+    }));
+
+  const backup = {
+    format: "cbt-hub-results-v1",
+    exportedAt: new Date().toISOString(),
+    results
+  };
+
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="cbt-hub-results-backup.json"'
+  );
+  res.setHeader("Content-Type", "application/json");
+  res.send(JSON.stringify(backup, null, 2));
 });
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
