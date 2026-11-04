@@ -622,7 +622,8 @@ app.post("/api/student/submit", requireLogin, (req, res) => {
   const score = questions.filter(
     q => Number(attempt.answers[q.id]) === q.answer
   ).length;
-
+attempt.syncStatus = "pending";
+attempt.syncedAt = null;
   attempt.submitted = true;
   attempt.status = "submitted";
   attempt.result = {
