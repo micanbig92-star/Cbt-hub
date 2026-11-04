@@ -3,7 +3,7 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
-
+const crypto = require("crypto");
 const app = express();
 app.set("trust proxy", 1);
 
@@ -641,7 +641,143 @@ app.post("/api/student/submit", requireLogin, (req, res) => {
   save();
   res.json(attempt.result);
 });
+// Receive verified results from an offline CBT HUB server
+app.post("/api/offline/sync-results", (req, res) => {
+  const expected = process.env.OFFLINE_SYNC_SECRET;
+  const supplied = req.get("x-offline-sync-secret") || "";
 
+  if (!expected) {
+    return res.status(503).json({
+      error: "Offline sync is not configured."
+    });
+  }
+
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+
+  if (
+    expectedBuffer.length !== suppliedBuffer.length ||
+    !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)
+  ) {
+    return res.status(401).json({
+      error: "Invalid sync authorization."
+    });
+  }
+
+  const payload = req.body;
+
+  if (
+    !payload ||
+    payload.format !== "cbt-hub-results-v1" ||
+    !Array.isArray(payload.results) ||
+    payload.results.length > 500
+  ) {
+    return res.status(400).json({
+      error: "Invalid results package."
+    });
+  }
+
+  let imported = 0;
+  let duplicates = 0;
+  const rejected = [];
+
+  for (const item of payload.results) {
+    if (
+      !item ||
+      typeof item.attemptId !== "string" ||
+      typeof item.examId !== "string" ||
+      typeof item.studentId !== "string" ||
+      !item.answers ||
+      typeof item.answers !== "object" ||
+      Array.isArray(item.answers)
+    ) {
+      rejected.push({ attemptId: item?.attemptId || null, reason: "Invalid result data." });
+      continue;
+    }
+
+    const exam = db.exams.find(e => e.id === item.examId);
+    const student = db.users.find(
+      u => u.id === item.studentId && u.role === "student"
+    );
+
+    if (!exam || !student) {
+      rejected.push({ attemptId: item.attemptId, reason: "Exam or student not found online." });
+      continue;
+    }
+
+    const existing = db.attempts.find(a => a.id === item.attemptId);
+
+    if (existing) {
+      if (
+        existing.examId === item.examId &&
+        existing.studentId === item.studentId &&
+        existing.submitted
+      ) {
+        duplicates++;
+      } else {
+        rejected.push({ attemptId: item.attemptId, reason: "Attempt ID conflict." });
+      }
+      continue;
+    }
+
+    const questions = exam.questionIds
+      .map(id => db.questions.find(q => q.id === id))
+      .filter(Boolean);
+
+    if (!questions.length) {
+      rejected.push({ attemptId: item.attemptId, reason: "Exam has no available questions." });
+      continue;
+    }
+
+    const answers = {};
+    for (const question of questions) {
+      const answer = item.answers[question.id];
+      if ([0, 1, 2, 3].includes(Number(answer))) {
+        answers[question.id] = Number(answer);
+      }
+    }
+
+    const score = questions.filter(
+      q => answers[q.id] === q.answer
+    ).length;
+
+    const submittedAt = new Date().toISOString();
+
+    db.attempts.push({
+      id: item.attemptId,
+      examId: exam.id,
+      studentId: student.id,
+      student: student.username,
+      answers,
+      submitted: true,
+      status: "submitted",
+      syncStatus: "synced",
+      syncedAt: submittedAt,
+      result: {
+        student: student.username,
+        exam: exam.title,
+        examId: exam.id,
+        score,
+        total: questions.length,
+        percentage: Math.round(score / questions.length * 100),
+        submittedAt
+      }
+    });
+
+    imported++;
+  }
+
+  if (imported > 0) {
+    save();
+  }
+
+  res.json({
+    ok: true,
+    imported,
+    duplicates,
+    rejected
+  });
+});
 // Results
 app.get("/api/results", requireStaff, (req, res) => {
   const user = currentUser(req);
