@@ -667,7 +667,23 @@ app.post("/api/retakes/:id/approve", requireAdmin, (req, res) => {
   save();
   res.json({ ok: true });
 });
+// OFFLINE MODE: Administrator checks local synchronization status
+app.get("/api/offline/sync-status", requireAdmin, (req, res) => {
+  const pending = db.attempts.filter(
+    attempt => attempt.submitted && !attempt.syncedAt
+  );
 
+  const synced = db.attempts.filter(
+    attempt => attempt.submitted && attempt.syncedAt
+  );
+
+  res.json({
+    mode: "offline-ready",
+    pendingResults: pending.length,
+    syncedResults: synced.length,
+    totalSubmitted: pending.length + synced.length
+  });
+});
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
