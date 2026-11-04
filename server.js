@@ -8,12 +8,12 @@ const app = express();
 app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
-const dir = path.join(__dirname, "data");
-const file = path.join(dir, "db.json");
+const DATA_DIR = path.join(__dirname, "data");
+const DB_FILE = path.join(DATA_DIR, "db.json");
 
-fs.mkdirSync(dir, { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const blank = () => ({
+const blankDB = () => ({
   users: [],
   questions: [],
   exams: [],
@@ -23,340 +23,391 @@ const blank = () => ({
 let db;
 
 try {
-  db = { ...blank(), ...JSON.parse(fs.readFileSync(file, "utf8")) };
+  db = { ...blankDB(), ...JSON.parse(fs.readFileSync(DB_FILE, "utf8")) };
 } catch {
-  db = blank();
+  db = blankDB();
 }
 
-const save = () => {
-  const temp = file + ".tmp";
+function save() {
+  const temp = DB_FILE + ".tmp";
   fs.writeFileSync(temp, JSON.stringify(db, null, 2));
-  fs.renameSync(temp, file);
-};
+  fs.renameSync(temp, DB_FILE);
+}
 
-const id = p =>
-  p + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+function makeId(prefix) {
+  return prefix + "_" + Date.now().toString(36) +
+    Math.random().toString(36).slice(2, 8);
+}
 
-const me = r => db.users.find(u => u.id === r.session.uid);
+function currentUser(req) {
+  return db.users.find(user => user.id === req.session.uid);
+}
 
-const safe = u => ({
-  id: u.id,
-  username: u.username,
-  role: u.role,
-  className: u.className || "",
-  approved: u.approved !== false,
-  canManageQuestions: !!u.canManageQuestions
-});
+function safeUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    className: user.className || "",
+    approved: user.approved !== false,
+    canManageQuestions: !!user.canManageQuestions
+  };
+}
 
-const auth = (r, s, n) =>
-  me(r) ? n() : s.status(401).json({ error: "Sign in required." });
+function requireLogin(req, res, next) {
+  if (!currentUser(req)) {
+    return res.status(401).json({ error: "Please sign in." });
+  }
+  next();
+}
 
-const admin = (r, s, n) =>
-  auth(r, s, () =>
-    me(r).role === "admin"
-      ? n()
-      : s.status(403).json({ error: "Admin only." })
-  );
+function requireAdmin(req, res, next) {
+  if (!currentUser(req)) {
+    return res.status(401).json({ error: "Please sign in." });
+  }
+  if (currentUser(req).role !== "admin") {
+    return res.status(403).json({ error: "Administrator access only." });
+  }
+  next();
+}
 
-const staff = (r, s, n) =>
-  auth(r, s, () =>
-    ["admin", "teacher"].includes(me(r).role) &&
-    me(r).approved !== false
-      ? n()
-      : s.status(403).json({ error: "Approved staff only." })
-  );
+function requireStaff(req, res, next) {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: "Please sign in." });
 
-const qperm = (r, s, n) =>
-  staff(r, s, () =>
-    me(r).role === "admin" || me(r).canManageQuestions
-      ? n()
-      : s.status(403).json({
-          error: "Admin has not granted question permission."
-        })
-  );
+  if (!["admin", "teacher"].includes(user.role) || user.approved === false) {
+    return res.status(403).json({ error: "Approved staff access required." });
+  }
+  next();
+}
+
+function requireQuestionPermission(req, res, next) {
+  const user = currentUser(req);
+  if (!user) return res.status(401).json({ error: "Please sign in." });
+
+  if (
+    user.role === "admin" ||
+    (user.role === "teacher" &&
+      user.approved !== false &&
+      user.canManageQuestions === true)
+  ) {
+    return next();
+  }
+
+  return res.status(403).json({
+    error: "You do not have permission to manage questions."
+  });
+}
 
 app.use(express.json({ limit: "8mb" }));
 
 app.use(session({
   name: "cbthub.sid",
-  secret: process.env.SESSION_SECRET || "change-this-secret",
+  secret: process.env.SESSION_SECRET || "replace-this-with-a-long-random-secret",
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    maxAge: 43200000
+    maxAge: 12 * 60 * 60 * 1000
   }
 }));
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/status", (r, s) => {
-  s.json({
+app.get("/api/status", (req, res) => {
+  const user = currentUser(req);
+  res.json({
     setup: !db.users.some(u => u.role === "admin"),
-    user: me(r) ? safe(me(r)) : null
+    user: user ? safeUser(user) : null
   });
 });
 
-app.post("/api/setup", async (r, s) => {
+// First administrator setup. Only works while no administrator exists.
+app.post("/api/setup", async (req, res) => {
   if (db.users.some(u => u.role === "admin")) {
-    return s.status(409).json({ error: "Admin already exists" });
+    return res.status(409).json({ error: "Administrator already exists." });
   }
 
-  const username = String(r.body.username || "").trim();
-  const password = String(r.body.password || "");
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
 
   if (username.length < 3 || password.length < 10) {
-    return s.status(400).json({
-      error: "Username 3+ and password 10+ required"
+    return res.status(400).json({
+      error: "Username must be at least 3 characters and password at least 10."
     });
   }
 
-  const u = {
-    id: id("u"),
+  if (db.users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
+    return res.status(409).json({ error: "Username already exists." });
+  }
+
+  const user = {
+    id: makeId("u"),
     username,
     passwordHash: await bcrypt.hash(password, 12),
     role: "admin",
-    approved: true
+    approved: true,
+    canManageQuestions: true,
+    className: ""
   };
 
-  db.users.push(u);
+  db.users.push(user);
   save();
 
-  r.session.uid = u.id;
-
-  r.session.save(err => {
-    if (err) {
-      return s.status(500).json({ error: "Could not save login session." });
-    }
-    s.json({ user: safe(u) });
+  req.session.uid = user.id;
+  req.session.save(err => {
+    if (err) return res.status(500).json({ error: "Could not create session." });
+    res.json({ user: safeUser(user) });
   });
 });
 
-app.post("/api/login", async (r, s) => {
-  const u = db.users.find(
-    x => x.username.toLowerCase() ===
-      String(r.body.username || "").trim().toLowerCase()
-  );
+// Public student registration. The role is assigned by the server,
+// never accepted from the browser.
+app.post("/api/student/register", async (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
+  const className = String(req.body.className || "").trim();
 
-  if (!u || !await bcrypt.compare(
-    String(r.body.password || ""),
-    u.passwordHash
-  )) {
-    return s.status(401).json({ error: "Wrong login details" });
-  }
-
-  if (u.approved === false) {
-    return s.status(403).json({
-      error: "Account awaits admin approval"
+  if (username.length < 3 || password.length < 8) {
+    return res.status(400).json({
+      error: "Username must be at least 3 characters and password at least 8."
     });
   }
 
-  r.session.uid = u.id;
+  if (db.users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
+    return res.status(409).json({ error: "That username is already taken." });
+  }
 
-  r.session.save(err => {
-    if (err) {
-      return s.status(500).json({ error: "Could not save login session." });
-    }
-    s.json({ user: safe(u) });
+  const user = {
+    id: makeId("u"),
+    username,
+    passwordHash: await bcrypt.hash(password, 12),
+    role: "student",
+    approved: true,
+    canManageQuestions: false,
+    className
+  };
+
+  db.users.push(user);
+  save();
+
+  req.session.uid = user.id;
+  req.session.save(err => {
+    if (err) return res.status(500).json({ error: "Could not create session." });
+    res.status(201).json({ user: safeUser(user) });
   });
 });
 
-app.post("/api/logout", (r, s) => {
-  r.session.destroy(() => s.json({ ok: true }));
+app.post("/api/login", async (req, res) => {
+  const username = String(req.body.username || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+
+  const user = db.users.find(u => u.username.toLowerCase() === username);
+
+  if (!user || !await bcrypt.compare(password, user.passwordHash)) {
+    return res.status(401).json({ error: "Incorrect username or password." });
+  }
+
+  if (user.approved === false) {
+    return res.status(403).json({ error: "Your account is awaiting approval." });
+  }
+
+  req.session.uid = user.id;
+  req.session.save(err => {
+    if (err) return res.status(500).json({ error: "Could not create session." });
+    res.json({ user: safeUser(user) });
+  });
 });
 
-app.get("/api/users", admin, (r, s) => {
-  s.json(db.users.map(safe));
+app.post("/api/logout", (req, res) => {
+  req.session.destroy(err => {
+    if (err) return res.status(500).json({ error: "Could not sign out." });
+    res.clearCookie("cbthub.sid");
+    res.json({ ok: true });
+  });
 });
 
-app.post("/api/users", admin, async (r, s) => {
-  const username = String(r.body.username || "").trim();
-  const password = String(r.body.password || "");
-  const role = r.body.role;
+// Admin account management
+app.get("/api/users", requireAdmin, (req, res) => {
+  res.json(db.users.map(safeUser));
+});
+
+app.post("/api/users", requireAdmin, async (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
+  const role = req.body.role;
 
   if (
     username.length < 3 ||
     password.length < 8 ||
-    !["teacher", "student"].includes(role)
+    !["student", "teacher"].includes(role)
   ) {
-    return s.status(400).json({
-      error: "Username 3+, password 8+, role teacher/student required"
-    });
+    return res.status(400).json({ error: "Check the username, password and role." });
   }
 
-  if (db.users.some(
-    u => u.username.toLowerCase() === username.toLowerCase()
-  )) {
-    return s.status(409).json({ error: "Username already exists" });
+  if (db.users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
+    return res.status(409).json({ error: "Username already exists." });
   }
 
-  const u = {
-    id: id("u"),
+  const user = {
+    id: makeId("u"),
     username,
     passwordHash: await bcrypt.hash(password, 12),
     role,
-    approved: role === "student" || r.body.approved === true,
+    approved: role === "student" || req.body.approved === true,
     canManageQuestions: false,
-    className: String(r.body.className || "").trim()
+    className: String(req.body.className || "").trim()
   };
 
-  db.users.push(u);
+  db.users.push(user);
   save();
-
-  s.json({ user: safe(u) });
+  res.status(201).json({ user: safeUser(user) });
 });
 
-app.patch("/api/users/:id", admin, (r, s) => {
-  const u = db.users.find(x => x.id === r.params.id);
-
-  if (!u || u.role === "admin") {
-    return s.status(404).json({ error: "Account not found" });
+app.patch("/api/users/:id", requireAdmin, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user || user.role === "admin") {
+    return res.status(404).json({ error: "Account not found." });
   }
 
-  if (typeof r.body.approved === "boolean") {
-    u.approved = r.body.approved;
+  if (typeof req.body.approved === "boolean") {
+    user.approved = req.body.approved;
   }
 
-  if (
-    typeof r.body.canManageQuestions === "boolean" &&
-    u.role === "teacher"
-  ) {
-    u.canManageQuestions = r.body.canManageQuestions;
+  if (user.role === "teacher" &&
+      typeof req.body.canManageQuestions === "boolean") {
+    user.canManageQuestions = req.body.canManageQuestions;
   }
 
   save();
-  s.json({ user: safe(u) });
+  res.json({ user: safeUser(user) });
 });
 
-app.get("/api/questions", staff, (r, s) => {
-  const u = me(r);
-
-  s.json(
-    db.questions
-      .filter(q =>
-        u.role === "admin" ||
-        q.owner === u.id ||
-        u.canManageQuestions
-      )
-      .map(q => ({
-        ...q,
-        answer:
-          u.role === "admin" || u.canManageQuestions
-            ? q.answer
-            : undefined
-      }))
+// Questions
+app.get("/api/questions", requireStaff, (req, res) => {
+  const user = currentUser(req);
+  const questions = db.questions.filter(q =>
+    user.role === "admin" ||
+    user.canManageQuestions ||
+    q.owner === user.id
   );
+
+  res.json(questions.map(q => ({
+    ...q,
+    answer: user.role === "admin" || user.canManageQuestions
+      ? q.answer
+      : undefined
+  })));
 });
 
-app.post("/api/questions", qperm, (r, s) => {
-  const { text, options, answer } = r.body;
+app.post("/api/questions", requireQuestionPermission, (req, res) => {
+  const text = String(req.body.text || "").trim();
+  const options = req.body.options;
+  const answer = Number(req.body.answer);
+  const image = String(req.body.image || "");
 
-  if (
-    !String(text || "").trim() ||
-    !Array.isArray(options) ||
-    options.length !== 4 ||
-    options.some(x => !String(x).trim()) ||
-    ![0, 1, 2, 3].includes(+answer)
-  ) {
-    return s.status(400).json({
-      error: "Question needs text, four options and correct answer"
+  if (!text || !Array.isArray(options) || options.length !== 4 ||
+      options.some(option => !String(option).trim()) ||
+      ![0, 1, 2, 3].includes(answer)) {
+    return res.status(400).json({
+      error: "A question, four options and a correct answer are required."
     });
   }
 
-  const q = {
-    id: id("q"),
-    text: String(text).trim(),
-    options: options.map(String),
-    answer: +answer,
-    subject: String(r.body.subject || "General"),
-    className: String(r.body.className || ""),
-    topic: String(r.body.topic || ""),
-    owner: me(r).id
+  if (image && (
+    !image.startsWith("data:image/png;base64,") ||
+    image.length > 1800000
+  )) {
+    return res.status(400).json({
+      error: "The drawing must be a PNG image smaller than the allowed limit."
+    });
+  }
+
+  const question = {
+    id: makeId("q"),
+    text,
+    options: options.map(x => String(x).trim()),
+    answer,
+    subject: String(req.body.subject || "General").trim(),
+    className: String(req.body.className || "").trim(),
+    topic: String(req.body.topic || "").trim(),
+    image,
+    owner: currentUser(req).id
   };
 
-  db.questions.push(q);
+  db.questions.push(question);
   save();
 
-  s.json({ question: { ...q, answer: undefined } });
+  res.status(201).json({
+    question: { ...question, answer: undefined }
+  });
 });
 
-app.delete("/api/questions/:id", qperm, (r, s) => {
-  const q = db.questions.find(x => x.id === r.params.id);
+app.delete("/api/questions/:id", requireQuestionPermission, (req, res) => {
+  const question = db.questions.find(q => q.id === req.params.id);
+  if (!question) return res.status(404).json({ error: "Question not found." });
 
-  if (!q) {
-    return s.status(404).json({ error: "Question not found" });
+  const user = currentUser(req);
+  if (user.role !== "admin" && question.owner !== user.id) {
+    return res.status(403).json({ error: "You can only delete your own questions." });
   }
 
-  if (me(r).role !== "admin" && q.owner !== me(r).id) {
-    return s.status(403).json({ error: "Own questions only" });
-  }
-
-  db.questions = db.questions.filter(x => x.id !== q.id);
+  db.questions = db.questions.filter(q => q.id !== question.id);
   save();
-
-  s.json({ ok: true });
+  res.json({ ok: true });
 });
 
-app.get("/api/exams", staff, (r, s) => {
-  const u = me(r);
+// Exams
+app.get("/api/exams", requireStaff, (req, res) => {
+  const user = currentUser(req);
 
-  s.json(
-    db.exams
-      .filter(e => u.role === "admin" || e.creator === u.id)
-      .map(e => ({
-        id: e.id,
-        title: e.title,
-        code: e.code,
-        className: e.className,
-        expiresAt: e.expiresAt,
-        duration: e.duration,
-        status: e.status
-      }))
-  );
+  res.json(db.exams
+    .filter(e => user.role === "admin" || e.creator === user.id)
+    .map(e => ({
+      id: e.id,
+      title: e.title,
+      code: e.code,
+      className: e.className,
+      expiresAt: e.expiresAt,
+      duration: e.duration,
+      status: e.status
+    })));
 });
 
-app.post("/api/exams", qperm, (r, s) => {
-  const ids = Array.isArray(r.body.questionIds)
-    ? r.body.questionIds
+app.post("/api/exams", requireQuestionPermission, (req, res) => {
+  const questionIds = Array.isArray(req.body.questionIds)
+    ? req.body.questionIds
     : [];
 
-  const qs = ids
-    .map(x => db.questions.find(q => q.id === x))
+  const questions = questionIds
+    .map(id => db.questions.find(q => q.id === id))
     .filter(Boolean);
 
-  if (!String(r.body.title || "").trim() || !qs.length) {
-    return s.status(400).json({
-      error: "Title and saved questions required"
-    });
+  const title = String(req.body.title || "").trim();
+
+  if (!title || !questions.length) {
+    return res.status(400).json({ error: "Exam title and questions are required." });
   }
 
   let code;
-
   do {
     code = Math.random().toString(36).slice(2, 8).toUpperCase();
   } while (db.exams.some(e => e.code === code));
 
-  const duration = Math.max(
-    1,
-    Math.min(480, +r.body.duration || 60)
-  );
+  const duration = Math.max(1, Math.min(480, Number(req.body.duration) || 60));
+  const expiryHours = Math.max(1, Math.min(720, Number(req.body.expiryHours) || 24));
 
-  const hours = Math.max(
-    1,
-    Math.min(720, +r.body.expiryHours || 24)
-  );
-
-  const e = {
-    id: id("e"),
-    title: String(r.body.title).trim(),
+  const exam = {
+    id: makeId("e"),
+    title,
     code,
-    className: String(r.body.className || ""),
+    className: String(req.body.className || "").trim(),
     duration,
-    questionIds: qs.map(q => q.id),
-    creator: me(r).id,
-    expiresAt: new Date(Date.now() + hours * 3600000).toISOString(),
+    questionIds: questions.map(q => q.id),
+    creator: currentUser(req).id,
+    expiresAt: new Date(Date.now() + expiryHours * 3600000).toISOString(),
     status: "scheduled",
     running: false,
     paused: false,
@@ -365,279 +416,260 @@ app.post("/api/exams", qperm, (r, s) => {
     active: []
   };
 
-  db.exams.push(e);
+  db.exams.push(exam);
   save();
 
-  s.json({
+  res.status(201).json({
     exam: {
-      id: e.id,
-      code: e.code,
-      expiresAt: e.expiresAt
+      id: exam.id,
+      code: exam.code,
+      expiresAt: exam.expiresAt
     }
   });
 });
 
-app.post("/api/exams/:id/control", admin, (r, s) => {
-  const e = db.exams.find(x => x.id === r.params.id);
+app.post("/api/exams/:id/control", requireAdmin, (req, res) => {
+  const exam = db.exams.find(e => e.id === req.params.id);
+  if (!exam) return res.status(404).json({ error: "Exam not found." });
 
-  if (!e) {
-    return s.status(404).json({ error: "Exam not found" });
-  }
+  const action = req.body.action;
 
-  const a = r.body.action;
-
-  if (a === "start") {
-    e.running = true;
-    e.paused = false;
-    e.status = "running";
-    e.startedAt = Date.now();
-    e.remaining = e.duration * 60;
-  } else if (a === "pause" && e.running && !e.paused) {
-    e.remaining = Math.max(
+  if (action === "start") {
+    exam.running = true;
+    exam.paused = false;
+    exam.status = "running";
+    exam.startedAt = Date.now();
+    exam.remaining = exam.duration * 60;
+  } else if (action === "pause" && exam.running && !exam.paused) {
+    exam.remaining = Math.max(
       0,
-      e.remaining - Math.floor((Date.now() - e.startedAt) / 1000)
+      exam.remaining - Math.floor((Date.now() - exam.startedAt) / 1000)
     );
-    e.paused = true;
-  } else if (a === "resume" && e.running && e.paused) {
-    e.startedAt = Date.now();
-    e.paused = false;
-  } else if (a === "end") {
-    e.running = false;
-    e.paused = true;
-    e.status = "ended";
-    e.remaining = 0;
+    exam.paused = true;
+  } else if (action === "resume" && exam.running && exam.paused) {
+    exam.startedAt = Date.now();
+    exam.paused = false;
+  } else if (action === "end") {
+    exam.running = false;
+    exam.paused = true;
+    exam.status = "ended";
+    exam.remaining = 0;
   } else {
-    return s.status(400).json({ error: "Invalid action" });
+    return res.status(400).json({ error: "Invalid exam action." });
   }
 
   save();
-  s.json({ ok: true });
+  res.json({ ok: true });
 });
 
-const remaining = e =>
-  e.running && !e.paused
-    ? Math.max(
-        0,
-        e.remaining - Math.floor((Date.now() - e.startedAt) / 1000)
-      )
-    : e.remaining;
-
-app.get("/api/exams/:id/monitor", admin, (r, s) => {
-  const e = db.exams.find(x => x.id === r.params.id);
-
-  if (!e) {
-    return s.status(404).json({ error: "Exam not found" });
+function examRemaining(exam) {
+  if (exam.running && !exam.paused) {
+    return Math.max(
+      0,
+      exam.remaining - Math.floor((Date.now() - exam.startedAt) / 1000)
+    );
   }
+  return exam.remaining;
+}
 
-  s.json({
-    title: e.title,
-    status: e.status,
-    remaining: remaining(e),
-    students: e.active
+app.get("/api/exams/:id/monitor", requireAdmin, (req, res) => {
+  const exam = db.exams.find(e => e.id === req.params.id);
+  if (!exam) return res.status(404).json({ error: "Exam not found." });
+
+  res.json({
+    title: exam.title,
+    status: exam.status,
+    remaining: examRemaining(exam),
+    students: exam.active
   });
 });
 
-app.post("/api/student/start", auth, (r, s) => {
-  const u = me(r);
+// Student exam routes
+app.post("/api/student/start", requireLogin, (req, res) => {
+  const user = currentUser(req);
 
-  if (u.role !== "student") {
-    return s.status(403).json({ error: "Student account required" });
+  if (user.role !== "student") {
+    return res.status(403).json({ error: "A student account is required." });
   }
 
-  const e = db.exams.find(
-    x => x.code === String(r.body.code || "").trim().toUpperCase()
+  const code = String(req.body.code || "").trim().toUpperCase();
+  const exam = db.exams.find(e => e.code === code);
+
+  if (!exam) return res.status(404).json({ error: "Invalid exam code." });
+  if (Date.now() > Date.parse(exam.expiresAt)) {
+    return res.status(410).json({ error: "This exam code has expired." });
+  }
+
+  if (exam.className &&
+      exam.className.toLowerCase() !== String(user.className || "").toLowerCase()) {
+    return res.status(403).json({ error: "This exam is not assigned to your class." });
+  }
+
+  if (!exam.running || exam.status !== "running") {
+    return res.status(403).json({ error: "The exam has not started." });
+  }
+
+  let attempt = db.attempts.find(
+    a => a.examId === exam.id && a.studentId === user.id
   );
 
-  if (!e) {
-    return s.status(404).json({ error: "Invalid exam code" });
-  }
-
-  if (Date.now() > Date.parse(e.expiresAt)) {
-    return s.status(410).json({ error: "Exam code expired" });
-  }
-
-  if (
-    e.className &&
-    e.className.toLowerCase() !== String(u.className || "").toLowerCase()
-  ) {
-    return s.status(403).json({
-      error: "Exam not assigned to your class"
+  if (attempt?.submitted && !attempt.retakeApproved) {
+    return res.status(403).json({
+      error: "You have already submitted this exam. Ask the administrator about a retake."
     });
   }
 
-  if (!e.running) {
-    return s.status(403).json({ error: "Exam has not started" });
+  if (attempt?.retakeApproved) {
+    attempt.submitted = false;
+    attempt.retakeApproved = false;
+    attempt.answers = {};
   }
 
-  let a = db.attempts.find(
-    x => x.examId === e.id && x.studentId === u.id
-  );
-
-  if (a?.submitted && !a.retakeApproved) {
-    return s.status(403).json({
-      error: "Already submitted. Ask admin for a retake"
-    });
-  }
-
-  if (a?.retakeApproved) {
-    a.submitted = false;
-    a.retakeApproved = false;
-    a.answers = {};
-  }
-
-  if (!a) {
-    a = {
-      id: id("a"),
-      examId: e.id,
-      studentId: u.id,
-      student: u.username,
+  if (!attempt) {
+    attempt = {
+      id: makeId("a"),
+      examId: exam.id,
+      studentId: user.id,
+      student: user.username,
       answers: {},
       submitted: false
     };
-
-    db.attempts.push(a);
+    db.attempts.push(attempt);
   }
 
-  a.status = "writing";
-  a.lastSeen = new Date().toISOString();
+  attempt.status = "writing";
+  attempt.lastSeen = new Date().toISOString();
 
-  let st = e.active.find(x => x.studentId === u.id);
-
-  if (!st) {
-    st = { studentId: u.id, student: u.username };
-    e.active.push(st);
+  let activeStudent = exam.active.find(s => s.studentId === user.id);
+  if (!activeStudent) {
+    activeStudent = { studentId: user.id, student: user.username };
+    exam.active.push(activeStudent);
   }
 
-  Object.assign(st, {
-    status: "writing",
-    lastSeen: a.lastSeen
-  });
+  activeStudent.status = "writing";
+  activeStudent.lastSeen = attempt.lastSeen;
 
-  const qs = e.questionIds
-    .map(x => db.questions.find(q => q.id === x))
+  const questions = exam.questionIds
+    .map(id => db.questions.find(q => q.id === id))
     .filter(Boolean);
 
   save();
 
-  s.json({
-    examId: e.id,
-    title: e.title,
-    duration: e.duration,
-    questions: qs.map(({ id, text, options }) => ({
-      id,
-      text,
-      options
+  res.json({
+    examId: exam.id,
+    title: exam.title,
+    duration: exam.duration,
+    questions: questions.map(q => ({
+      id: q.id,
+      text: q.text,
+      options: q.options,
+      image: q.image || ""
     })),
-    answers: a.answers
+    answers: attempt.answers
   });
 });
 
-app.post("/api/student/save", auth, (r, s) => {
-  const u = me(r);
-
-  const a = db.attempts.find(
-    x => x.examId === r.body.examId && x.studentId === u.id
-  );
-
-  if (u.role !== "student" || !a || a.submitted) {
-    return s.status(403).json({ error: "No active attempt" });
+app.post("/api/student/save", requireLogin, (req, res) => {
+  const user = currentUser(req);
+  if (user.role !== "student") {
+    return res.status(403).json({ error: "Student account required." });
   }
 
-  a.answers = {
-    ...a.answers,
-    ...(r.body.answers || {})
-  };
+  const attempt = db.attempts.find(
+    a => a.examId === req.body.examId && a.studentId === user.id
+  );
 
-  a.lastSeen = new Date().toISOString();
+  if (!attempt || attempt.submitted) {
+    return res.status(403).json({ error: "No active attempt." });
+  }
+
+  const incoming = req.body.answers && typeof req.body.answers === "object"
+    ? req.body.answers
+    : {};
+
+  attempt.answers = { ...attempt.answers, ...incoming };
+  attempt.lastSeen = new Date().toISOString();
 
   save();
-  s.json({ ok: true });
+  res.json({ ok: true });
 });
 
-app.post("/api/student/submit", auth, (r, s) => {
-  const u = me(r);
-
-  const e = db.exams.find(x => x.id === r.body.examId);
-
-  const a = db.attempts.find(
-    x => x.examId === r.body.examId && x.studentId === u.id
-  );
-
-  if (u.role !== "student" || !e || !a || a.submitted) {
-    return s.status(409).json({
-      error: "Attempt unavailable or submitted"
-    });
+app.post("/api/student/submit", requireLogin, (req, res) => {
+  const user = currentUser(req);
+  if (user.role !== "student") {
+    return res.status(403).json({ error: "Student account required." });
   }
 
-  a.answers = {
-    ...a.answers,
-    ...(r.body.answers || {})
-  };
+  const exam = db.exams.find(e => e.id === req.body.examId);
+  const attempt = db.attempts.find(
+    a => a.examId === req.body.examId && a.studentId === user.id
+  );
 
-  const qs = e.questionIds
-    .map(x => db.questions.find(q => q.id === x))
+  if (!exam || !attempt || attempt.submitted) {
+    return res.status(409).json({ error: "Attempt unavailable or already submitted." });
+  }
+
+  const incoming = req.body.answers && typeof req.body.answers === "object"
+    ? req.body.answers
+    : {};
+
+  attempt.answers = { ...attempt.answers, ...incoming };
+
+  const questions = exam.questionIds
+    .map(id => db.questions.find(q => q.id === id))
     .filter(Boolean);
 
-  const score = qs.filter(
-    q => +a.answers[q.id] === q.answer
+  const score = questions.filter(
+    q => Number(attempt.answers[q.id]) === q.answer
   ).length;
 
-  a.submitted = true;
-  a.status = "submitted";
-
-  a.result = {
-    student: u.username,
-    exam: e.title,
-    examId: e.id,
+  attempt.submitted = true;
+  attempt.status = "submitted";
+  attempt.result = {
+    student: user.username,
+    exam: exam.title,
+    examId: exam.id,
     score,
-    total: qs.length,
-    percentage: Math.round(score / Math.max(1, qs.length) * 100),
+    total: questions.length,
+    percentage: Math.round(score / Math.max(1, questions.length) * 100),
     submittedAt: new Date().toISOString()
   };
 
-  const st = e.active.find(x => x.studentId === u.id);
-
-  if (st) {
-    st.status = "submitted";
-  }
+  const activeStudent = exam.active.find(s => s.studentId === user.id);
+  if (activeStudent) activeStudent.status = "submitted";
 
   save();
-  s.json(a.result);
+  res.json(attempt.result);
 });
 
-app.get("/api/results", staff, (r, s) => {
-  const u = me(r);
+// Results
+app.get("/api/results", requireStaff, (req, res) => {
+  const user = currentUser(req);
 
-  s.json(
-    db.attempts
-      .filter(a =>
-        a.result &&
-        (
-          u.role === "admin" ||
-          db.exams.find(e => e.id === a.examId)?.creator === u.id
-        )
-      )
-      .map(a => a.result)
-  );
+  const results = db.attempts
+    .filter(a => a.result && (
+      user.role === "admin" ||
+      db.exams.find(e => e.id === a.examId)?.creator === user.id
+    ))
+    .map(a => ({ ...a.result, attemptId: a.id }));
+
+  res.json(results);
 });
 
-app.post("/api/retakes/:id/approve", admin, (r, s) => {
-  const a = db.attempts.find(
-    x => x.id === r.params.id && x.submitted
+app.post("/api/retakes/:id/approve", requireAdmin, (req, res) => {
+  const attempt = db.attempts.find(
+    a => a.id === req.params.id && a.submitted
   );
 
-  if (!a) {
-    return s.status(404).json({ error: "Attempt not found" });
-  }
+  if (!attempt) return res.status(404).json({ error: "Submitted attempt not found." });
 
-  a.retakeApproved = true;
+  attempt.retakeApproved = true;
   save();
-
-  s.json({ ok: true });
+  res.json({ ok: true });
 });
 
-app.get("*", (r, s) => {
-  s.sendFile(path.join(__dirname, "public", "index.html"));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 app.listen(PORT, "0.0.0.0", () => {
