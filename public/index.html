@@ -46,136 +46,419 @@ textarea{min-height:75px}
 </head>
 <body>
 <div id="app"><div class="loading">Loading CBT HUB…</div></div>
+
 <script>
 const app=document.getElementById('app');
 let me=null,tab='overview',exam=null,answers={},timerId=null,saveId=null;
+
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 async function api(url,opts={}){
- const r=await fetch(url,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(opts.headers||{})},...opts});
- let d={};try{d=await r.json()}catch{}
+ const r=await fetch(url,{
+  credentials:'same-origin',
+  headers:{'Content-Type':'application/json',...(opts.headers||{})},
+  ...opts
+ });
+ let d={};
+ try{d=await r.json()}catch{}
  if(!r.ok)throw Error(d.error||'Request failed');
  return d;
 }
-function top(){
- return `<header class="top"><div class="brand">CBT HUB<small>SCHOOL EXAMINATION PORTAL</small></div><div class="right">${me?`<span>${esc(me.username)} · ${esc(me.role)}</span><button class="secondary" onclick="logout()">Logout</button>`:''}</div></header>`;
+
+function headerBar(){
+ return `<header class="top">
+  <div class="brand">CBT HUB<small>SCHOOL EXAMINATION PORTAL</small></div>
+  <div class="right">${me?`<span>${esc(me.username)} · ${esc(me.role)}</span><button class="secondary" onclick="logout()">Logout</button>`:''}</div>
+ </header>`;
 }
-function shell(body){app.innerHTML=top()+`<main class="wrap">${body}</main>`}
-function errorBox(t){return `<div class="error">${esc(t)}</div>`}
+
+function shell(body){
+ app.innerHTML=headerBar()+`<main class="wrap">${body}</main>`;
+}
+
+function errorBox(t){
+ return `<div class="error">${esc(t)}</div>`;
+}
+
 async function init(){
  try{
-  const s=await api('/api/status');me=s.user;
+  app.innerHTML='<div class="loading">Checking CBT HUB...</div>';
+  const s=await api('/api/status');
+  me=s.user;
   if(!me){authScreen(s.setup);return}
-  if(me.role==='student')studentHome();else dashboard();
- }catch(e){shell(errorBox(e.message))}
+  if(me.role==='student')studentHome();
+  else dashboard();
+ }catch(e){
+  shell(`<section class="panel"><h2>Unable to load CBT HUB</h2>${errorBox(e.message)}<button onclick="init()">Try again</button></section>`);
+ }
 }
+
 function authScreen(setup){
- shell(`<section class="panel auth"><h1>${setup?'Create your admin account':'Welcome back'}</h1><p class="muted">${setup?'This first account becomes the CBT HUB administrator.':'Sign in to continue.'}</p><form onsubmit="login(event,${setup})"><label>Username</label><input name="username" required minlength="3"><label>Password</label><input name="password" type="password" required minlength="${setup?10:1}"><button style="width:100%;margin-top:17px">${setup?'Create admin account':'Sign in'}</button></form></section>`);
+ shell(`<section class="panel auth">
+  <h1>${setup?'Create your admin account':'Welcome back'}</h1>
+  <p class="muted">${setup?'This first account becomes the CBT HUB administrator.':'Sign in to continue.'}</p>
+  <form onsubmit="login(event,${setup})">
+   <label>Username</label>
+   <input name="username" required minlength="3">
+   <label>Password</label>
+   <input name="password" type="password" required minlength="${setup?10:1}">
+   <button style="width:100%;margin-top:17px">${setup?'Create admin account':'Sign in'}</button>
+  </form>
+ </section>`);
 }
+
 async function login(ev,setup){
- ev.preventDefault();const f=new FormData(ev.target);
- try{const d=await api(setup?'/api/setup':'/api/login',{method:'POST',body:JSON.stringify(Object.fromEntries(f))});me=d.user;init()}
- catch(e){alert(e.message)}
+ ev.preventDefault();
+ const f=new FormData(ev.target);
+ try{
+  const d=await api(setup?'/api/setup':'/api/login',{
+   method:'POST',
+   body:JSON.stringify(Object.fromEntries(f))
+  });
+  me=d.user;
+  init();
+ }catch(e){alert(e.message)}
 }
-async function logout(){await api('/api/logout',{method:'POST'});me=null;init()}
+
+async function logout(){
+ try{
+  await api('/api/logout',{method:'POST'});
+  me=null;
+  init();
+ }catch(e){alert(e.message)}
+}
+
 function dashboard(){
- const tabs=me.role==='admin'?['overview','users','questions','exams','results']:['overview','questions','exams','results'];
- shell(`<h1>${me.role==='admin'?'Admin dashboard':'Teacher dashboard'}</h1><p class="muted">Manage examination activities.</p><nav class="tabs">${tabs.map(t=>`<button class="${tab===t?'active':''}" onclick="tab='${t}';dashboard()">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</nav><div id="content"></div>`);
+ const tabs=me.role==='admin'
+  ?['overview','users','questions','exams','results']
+  :['overview','questions','exams','results'];
+
+ shell(`<h1>${me.role==='admin'?'Admin dashboard':'Teacher dashboard'}</h1>
+ <p class="muted">Manage examination activities.</p>
+ <nav class="tabs">
+ ${tabs.map(t=>`<button class="${tab===t?'active':''}" onclick="tab='${t}';dashboard()">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}
+ </nav>
+ <div id="content"></div>`);
+
  loadTab();
 }
+
 async function loadTab(){
  const el=document.getElementById('content');
+ if(!el)return;
+
  try{
   if(tab==='overview'){
-   const [u,q,e,r]=await Promise.all([me.role==='admin'?api('/api/users'):Promise.resolve([]),api('/api/questions'),api('/api/exams'),api('/api/results')]);
-   el.innerHTML=`<div class="grid"><div class="stat"><b>${u.length||'—'}</b><span>Accounts</span></div><div class="stat"><b>${q.length}</b><span>Questions</span></div><div class="stat"><b>${e.length}</b><span>Your exams</span></div><div class="stat"><b>${r.length}</b><span>Results</span></div></div><section class="panel"><h2>Welcome, ${esc(me.username)}</h2><p class="muted">Choose a section above to manage your CBT activities.</p></section>`;
+   const [u,q,e,r]=await Promise.all([
+    me.role==='admin'?api('/api/users'):Promise.resolve([]),
+    api('/api/questions'),
+    api('/api/exams'),
+    api('/api/results')
+   ]);
+
+   el.innerHTML=`<div class="grid">
+    <div class="stat"><b>${u.length||'—'}</b><span>Accounts</span></div>
+    <div class="stat"><b>${q.length}</b><span>Questions</span></div>
+    <div class="stat"><b>${e.length}</b><span>Your exams</span></div>
+    <div class="stat"><b>${r.length}</b><span>Results</span></div>
+   </div>
+   <section class="panel">
+    <h2>Welcome, ${esc(me.username)}</h2>
+    <p class="muted">Choose a section above to manage your CBT activities.</p>
+   </section>`;
   }
+
   if(tab==='users')await users(el);
   if(tab==='questions')await questions(el);
   if(tab==='exams')await exams(el);
   if(tab==='results')await results(el);
- }catch(e){el.innerHTML=errorBox(e.message)}
+
+ }catch(e){
+  el.innerHTML=errorBox(e.message);
+ }
 }
+
 async function users(el){
  const us=await api('/api/users');
- el.innerHTML=`<section class="panel"><h2>Create account</h2><form onsubmit="createUser(event)"><div class="formgrid"><div><label>Username</label><input name="username" required minlength="3"></div><div><label>Temporary password</label><input name="password" required minlength="8"></div><div><label>Role</label><select name="role"><option value="student">Student</option><option value="teacher">Teacher</option></select></div><div><label>Class</label><input name="className" placeholder="SS2"></div></div><button>Create account</button></form></section><section class="panel"><h2>Accounts</h2>${us.map(u=>`<div class="item"><div class="row"><div><b>${esc(u.username)}</b><div class="muted">${esc(u.role)} · ${esc(u.className||'No class')}</div></div><span class="pill">${u.approved?'Approved':'Pending'}</span></div>${u.role==='teacher'?`<div class="row"><button class="secondary" onclick="changeUser('${u.id}',{approved:${!u.approved}})">${u.approved?'Revoke approval':'Approve teacher'}</button><button class="secondary" onclick="changeUser('${u.id}',{canManageQuestions:${!u.canManageQuestions}})">${u.canManageQuestions?'Revoke question access':'Grant question access'}</button></div>`:''}</div>`).join('')}</section>`;
+
+ el.innerHTML=`<section class="panel">
+ <h2>Create account</h2>
+ <form onsubmit="createUser(event)">
+  <div class="formgrid">
+   <div><label>Username</label><input name="username" required minlength="3"></div>
+   <div><label>Temporary password</label><input name="password" required minlength="8"></div>
+   <div><label>Role</label><select name="role"><option value="student">Student</option><option value="teacher">Teacher</option></select></div>
+   <div><label>Class</label><input name="className" placeholder="SS2"></div>
+  </div>
+  <button>Create account</button>
+ </form>
+ </section>
+ <section class="panel">
+ <h2>Accounts</h2>
+ ${us.map(u=>`<div class="item">
+  <div class="row">
+   <div><b>${esc(u.username)}</b><div class="muted">${esc(u.role)} · ${esc(u.className||'No class')}</div></div>
+   <span class="pill">${u.approved?'Approved':'Pending'}</span>
+  </div>
+  ${u.role==='teacher'?`<div class="row">
+   <button class="secondary" onclick="changeUser('${u.id}',{approved:${!u.approved}})">${u.approved?'Revoke approval':'Approve teacher'}</button>
+   <button class="secondary" onclick="changeUser('${u.id}',{canManageQuestions:${!u.canManageQuestions}})">${u.canManageQuestions?'Revoke question access':'Grant question access'}</button>
+  </div>`:''}
+ </div>`).join('')}
+ </section>`;
 }
+
 async function createUser(e){
  e.preventDefault();
- try{await api('/api/users',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});alert('Account created');loadTab()}
- catch(x){alert(x.message)}
+ try{
+  await api('/api/users',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
+  alert('Account created');
+  loadTab();
+ }catch(x){alert(x.message)}
 }
+
 async function changeUser(id,body){
- try{await api('/api/users/'+id,{method:'PATCH',body:JSON.stringify(body)});loadTab()}
- catch(e){alert(e.message)}
+ try{
+  await api('/api/users/'+id,{method:'PATCH',body:JSON.stringify(body)});
+  loadTab();
+ }catch(e){alert(e.message)}
 }
+
 async function questions(el){
  const qs=await api('/api/questions');
- el.innerHTML=`<section class="panel"><h2>Add a question</h2><form onsubmit="addQuestion(event)"><label>Question</label><textarea name="text" required></textarea><div class="formgrid">${[0,1,2,3].map(i=>`<div><label>Option ${'ABCD'[i]}</label><input name="o${i}" required></div>`).join('')}</div><div class="formgrid"><div><label>Correct option</label><select name="answer"><option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option></select></div><div><label>Subject</label><input name="subject" placeholder="Mathematics"></div><div><label>Class</label><input name="className" placeholder="SS2"></div><div><label>Topic</label><input name="topic"></div></div><button>Save question</button></form></section><section class="panel"><h2>Question bank (${qs.length})</h2>${qs.map(q=>`<div class="item"><b>${esc(q.text)}</b><p class="muted">${esc(q.subject)} · ${esc(q.className)} · ${esc(q.topic)}</p>${q.answer===undefined?'':`<span class="pill">Answer: ${'ABCD'[q.answer]}</span>`}<button class="danger" style="float:right" onclick="deleteQuestion('${q.id}')">Delete</button></div>`).join('')||'<p>No questions saved yet.</p>'}</section>`;
+
+ el.innerHTML=`<section class="panel">
+ <h2>Add a question</h2>
+ <form onsubmit="addQuestion(event)">
+  <label>Question</label><textarea name="text" required></textarea>
+  <div class="formgrid">
+   ${[0,1,2,3].map(i=>`<div><label>Option ${'ABCD'[i]}</label><input name="o${i}" required></div>`).join('')}
+  </div>
+  <div class="formgrid">
+   <div><label>Correct option</label><select name="answer"><option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option></select></div>
+   <div><label>Subject</label><input name="subject" placeholder="Mathematics"></div>
+   <div><label>Class</label><input name="className" placeholder="SS2"></div>
+   <div><label>Topic</label><input name="topic"></div>
+  </div>
+  <button>Save question</button>
+ </form>
+ </section>
+ <section class="panel">
+ <h2>Question bank (${qs.length})</h2>
+ ${qs.map(q=>`<div class="item">
+  <b>${esc(q.text)}</b>
+  <p class="muted">${esc(q.subject)} · ${esc(q.className)} · ${esc(q.topic)}</p>
+  ${q.answer===undefined?'':`<span class="pill">Answer: ${'ABCD'[q.answer]}</span>`}
+  <button class="danger" style="float:right" onclick="deleteQuestion('${q.id}')">Delete</button>
+ </div>`).join('')||'<p>No questions saved yet.</p>'}
+ </section>`;
 }
+
 async function addQuestion(e){
- e.preventDefault();const f=new FormData(e.target);
+ e.preventDefault();
+ const f=new FormData(e.target);
  try{
-  await api('/api/questions',{method:'POST',body:JSON.stringify({text:f.get('text'),options:[0,1,2,3].map(i=>f.get('o'+i)),answer:f.get('answer'),subject:f.get('subject'),className:f.get('className'),topic:f.get('topic')})});
-  alert('Question saved');loadTab();
+  await api('/api/questions',{
+   method:'POST',
+   body:JSON.stringify({
+    text:f.get('text'),
+    options:[0,1,2,3].map(i=>f.get('o'+i)),
+    answer:f.get('answer'),
+    subject:f.get('subject'),
+    className:f.get('className'),
+    topic:f.get('topic')
+   })
+  });
+  alert('Question saved');
+  loadTab();
  }catch(x){alert(x.message)}
 }
+
 async function deleteQuestion(id){
  if(!confirm('Delete this question?'))return;
- try{await api('/api/questions/'+id,{method:'DELETE'});loadTab()}
- catch(e){alert(e.message)}
-}
-async function exams(el){
- const [es,qs]=await Promise.all([api('/api/exams'),api('/api/questions')]);
- el.innerHTML=`<section class="panel"><h2>Create an exam</h2><form onsubmit="createExam(event)"><label>Exam title</label><input name="title" required><div class="formgrid"><div><label>Class</label><input name="className" placeholder="SS2"></div><div><label>Duration (minutes)</label><input name="duration" type="number" min="1" max="480" value="60"></div><div><label>Code expiry (hours)</label><input name="expiryHours" type="number" min="1" max="720" value="24"></div></div><label>Choose questions</label><div class="item">${qs.map(q=>`<label class="option"><input type="checkbox" name="questionIds" value="${q.id}"> ${esc(q.text)} (${esc(q.subject)})</label>`).join('')||'Add questions first.'}</div><button ${qs.length?'':'disabled'}>Create exam</button></form></section><section class="panel"><h2>Your exams</h2>${es.map(e=>`<div class="item"><b>${esc(e.title)}</b><p>Class: ${esc(e.className||'All')} · ${e.duration} minutes · <span class="pill">${esc(e.status)}</span></p><p>Exam code: <b>${esc(e.code)}</b> · Expires ${new Date(e.expiresAt).toLocaleString()}</p>${me.role==='admin'?`<div class="row"><button onclick="controlExam('${e.id}','start')">Start</button><button class="secondary" onclick="controlExam('${e.id}','pause')">Pause</button><button class="secondary" onclick="controlExam('${e.id}','resume')">Resume</button><button class="danger" onclick="controlExam('${e.id}','end')">End</button><button class="secondary" onclick="monitor('${e.id}')">Monitor</button></div>`:''}</div>`).join('')||'<p>No exams created yet.</p>'}</section>`;
-}
-async function createExam(e){
- e.preventDefault();const f=new FormData(e.target);
  try{
-  const d=await api('/api/exams',{method:'POST',body:JSON.stringify({title:f.get('title'),className:f.get('className'),duration:f.get('duration'),expiryHours:f.get('expiryHours'),questionIds:f.getAll('questionIds')})});
-  alert('Exam created. Code: '+d.exam.code);loadTab();
+  await api('/api/questions/'+id,{method:'DELETE'});
+  loadTab();
+ }catch(e){alert(e.message)}
+}
+
+async function exams(el){
+ const [es,qs]=await Promise.all([
+  api('/api/exams'),
+  api('/api/questions')
+ ]);
+
+ el.innerHTML=`<section class="panel">
+ <h2>Create an exam</h2>
+ <form onsubmit="createExam(event)">
+  <label>Exam title</label><input name="title" required>
+  <div class="formgrid">
+   <div><label>Class</label><input name="className" placeholder="SS2"></div>
+   <div><label>Duration (minutes)</label><input name="duration" type="number" min="1" max="480" value="60"></div>
+   <div><label>Code expiry (hours)</label><input name="expiryHours" type="number" min="1" max="720" value="24"></div>
+  </div>
+  <label>Choose questions</label>
+  <div class="item">
+   ${qs.map(q=>`<label class="option"><input type="checkbox" name="questionIds" value="${q.id}"> ${esc(q.text)} (${esc(q.subject)})</label>`).join('')||'Add questions first.'}
+  </div>
+  <button ${qs.length?'':'disabled'}>Create exam</button>
+ </form>
+ </section>
+ <section class="panel">
+ <h2>Your exams</h2>
+ ${es.map(e=>`<div class="item">
+  <b>${esc(e.title)}</b>
+  <p>Class: ${esc(e.className||'All')} · ${e.duration} minutes · <span class="pill">${esc(e.status)}</span></p>
+  <p>Exam code: <b>${esc(e.code)}</b> · Expires ${new Date(e.expiresAt).toLocaleString()}</p>
+  ${me.role==='admin'?`<div class="row">
+   <button onclick="controlExam('${e.id}','start')">Start</button>
+   <button class="secondary" onclick="controlExam('${e.id}','pause')">Pause</button>
+   <button class="secondary" onclick="controlExam('${e.id}','resume')">Resume</button>
+   <button class="danger" onclick="controlExam('${e.id}','end')">End</button>
+   <button class="secondary" onclick="monitor('${e.id}')">Monitor</button>
+  </div>`:''}
+ </div>`).join('')||'<p>No exams created yet.</p>'}
+ </section>`;
+}
+
+async function createExam(e){
+ e.preventDefault();
+ const f=new FormData(e.target);
+ try{
+  const d=await api('/api/exams',{
+   method:'POST',
+   body:JSON.stringify({
+    title:f.get('title'),
+    className:f.get('className'),
+    duration:f.get('duration'),
+    expiryHours:f.get('expiryHours'),
+    questionIds:f.getAll('questionIds')
+   })
+  });
+  alert('Exam created. Code: '+d.exam.code);
+  loadTab();
  }catch(x){alert(x.message)}
 }
+
 async function controlExam(id,action){
- try{await api('/api/exams/'+id+'/control',{method:'POST',body:JSON.stringify({action})});alert('Exam '+action+' command sent');loadTab()}
- catch(e){alert(e.message)}
+ try{
+  await api('/api/exams/'+id+'/control',{
+   method:'POST',
+   body:JSON.stringify({action})
+  });
+  alert('Exam '+action+' command sent');
+  loadTab();
+ }catch(e){alert(e.message)}
 }
+
 async function monitor(id){
- try{const d=await api('/api/exams/'+id+'/monitor');alert(`${d.title}\nStatus: ${d.status}\nStudents: ${d.students.length}\n`+d.students.map(s=>s.student+': '+s.status).join('\n'))}
- catch(e){alert(e.message)}
+ try{
+  const d=await api('/api/exams/'+id+'/monitor');
+  alert(`${d.title}\nStatus: ${d.status}\nStudents: ${d.students.length}\n`+d.students.map(s=>s.student+': '+s.status).join('\n'));
+ }catch(e){alert(e.message)}
 }
+
 async function results(el){
  const rs=await api('/api/results');
- el.innerHTML=`<section class="panel"><h2>Exam results</h2>${rs.map(r=>`<div class="item"><b>${esc(r.student)}</b> — ${esc(r.exam)}<p>${r.score}/${r.total} (${r.percentage}%) · ${new Date(r.submittedAt).toLocaleString()}</p></div>`).join('')||'<p>No submitted results yet.</p>'}</section>`;
+ el.innerHTML=`<section class="panel">
+ <h2>Exam results</h2>
+ ${rs.map(r=>`<div class="item">
+  <b>${esc(r.student)}</b> — ${esc(r.exam)}
+  <p>${r.score}/${r.total} (${r.percentage}%) · ${new Date(r.submittedAt).toLocaleString()}</p>
+ </div>`).join('')||'<p>No submitted results yet.</p>'}
+ </section>`;
 }
+
 async function studentHome(){
- shell(`<section class="panel"><h1>Student portal</h1><p class="muted">Enter the exam code given by your teacher when the exam is open.</p><form onsubmit="startExam(event)"><label>Exam code</label><input name="code" required maxlength="12" autocapitalize="characters"><button style="margin-top:12px">Enter exam</button></form></section>`);
+ shell(`<section class="panel">
+ <h1>Student portal</h1>
+ <p class="muted">Enter the exam code given by your teacher when the exam is open.</p>
+ <form onsubmit="startExam(event)">
+  <label>Exam code</label>
+  <input name="code" required maxlength="12" autocapitalize="characters">
+  <button style="margin-top:12px">Enter exam</button>
+ </form>
+ </section>`);
 }
+
 async function startExam(e){
  e.preventDefault();
- try{exam=await api('/api/student/start',{method:'POST',body:JSON.stringify({code:new FormData(e.target).get('code')})});answers={...exam.answers};renderExam()}
- catch(x){alert(x.message)}
+ try{
+  exam=await api('/api/student/start',{
+   method:'POST',
+   body:JSON.stringify({code:new FormData(e.target).get('code')})
+  });
+  answers={...exam.answers};
+  renderExam();
+ }catch(x){alert(x.message)}
 }
+
 function renderExam(){
- clearInterval(timerId);clearInterval(saveId);
+ clearInterval(timerId);
+ clearInterval(saveId);
+
  let seconds=exam.duration*60;
- shell(`<section class="panel"><div class="row"><div><h1>${esc(exam.title)}</h1><p class="muted">Answer all questions, then submit.</p></div><div class="timer" id="timer">${Math.floor(seconds/60)}:00</div></div><div id="paper">${exam.questions.map((q,i)=>`<div class="question"><b>${i+1}. ${esc(q.text)}</b>${q.options.map((o,j)=>`<label class="option"><input type="radio" name="${q.id}" value="${j}" ${String(answers[q.id])===String(j)?'checked':''} onchange="answers['${q.id}']=this.value"> ${'ABCD'[j]}. ${esc(o)}</label>`).join('')}</div>`).join('')}</div><button onclick="submitExam()">Submit exam</button></section>`);
+
+ shell(`<section class="panel">
+ <div class="row">
+  <div><h1>${esc(exam.title)}</h1><p class="muted">Answer all questions, then submit.</p></div>
+  <div class="timer" id="timer">${Math.floor(seconds/60)}:00</div>
+ </div>
+ <div id="paper">
+ ${exam.questions.map((q,i)=>`<div class="question">
+  <b>${i+1}. ${esc(q.text)}</b>
+  ${q.options.map((o,j)=>`<label class="option">
+   <input type="radio" name="${q.id}" value="${j}" ${String(answers[q.id])===String(j)?'checked':''} onchange="answers['${q.id}']=this.value">
+   ${'ABCD'[j]}. ${esc(o)}
+  </label>`).join('')}
+ </div>`).join('')}
+ </div>
+ <button onclick="submitExam()">Submit exam</button>
+ </section>`);
+
  timerId=setInterval(()=>{
   seconds--;
   const t=document.getElementById('timer');
   if(t)t.textContent=Math.floor(Math.max(0,seconds)/60)+':'+String(Math.max(0,seconds)%60).padStart(2,'0');
-  if(seconds<=0){clearInterval(timerId);submitExam(true)}
+  if(seconds<=0){
+   clearInterval(timerId);
+   submitExam(true);
+  }
  },1000);
- saveId=setInterval(()=>{if(exam)api('/api/student/save',{method:'POST',body:JSON.stringify({examId:exam.examId,answers})}).catch(()=>{})},15000);
+
+ saveId=setInterval(()=>{
+  if(exam){
+   api('/api/student/save',{
+    method:'POST',
+    body:JSON.stringify({examId:exam.examId,answers})
+   }).catch(()=>{});
+  }
+ },15000);
 }
+
 async function submitExam(auto=false){
  if(!exam)return;
  if(!auto&&!confirm('Submit your exam now?'))return;
+
  try{
-  const r=await api('/api/student/submit',{method:'POST',body:JSON.stringify({examId:exam.examId,answers})});
-  clearInterval(timerId);clearInterval(saveId);exam=null;
-  shell(`<section class="panel"><h1>Exam submitted</h1><div class="stat"><b>${r.score}/${r.total}</b><span>Your score · ${r.percentage}%</span></div><p>Your answers have been submitted.</p><button onclick="studentHome()">Back to portal</button></section>`);
+  const r=await api('/api/student/submit',{
+   method:'POST',
+   body:JSON.stringify({examId:exam.examId,answers})
+  });
+
+  clearInterval(timerId);
+  clearInterval(saveId);
+  exam=null;
+
+  shell(`<section class="panel">
+   <h1>Exam submitted</h1>
+   <div class="stat"><b>${r.score}/${r.total}</b><span>Your score · ${r.percentage}%</span></div>
+   <p>Your answers have been submitted.</p>
+   <button onclick="studentHome()">Back to portal</button>
+  </section>`);
  }catch(e){alert(e.message)}
 }
+
 init();
 </script>
 </body>
