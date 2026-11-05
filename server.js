@@ -3,7 +3,7 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
-
+const os = require("os");
 const app = express();
 app.set("trust proxy", 1);
 
@@ -836,7 +836,30 @@ app.get("/api/offline/export-results", requireAdmin, (req, res) => {
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
+// PHONE LOCAL NETWORK ADDRESS
+app.get("/api/network", (req, res) => {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
 
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry && entry.family === "IPv4" && !entry.internal) {
+        addresses.push({
+          address: entry.address,
+          url: `http://${entry.address}:${PORT}`
+        });
+      }
+    }
+  }
+
+  res.setHeader("Cache-Control", "no-store");
+
+  res.json({
+    listening: "0.0.0.0",
+    port: Number(PORT),
+    localAddresses: addresses
+  });
+});
 app.listen(PORT, "0.0.0.0", () => {
   console.log("CBT HUB running on port " + PORT);
 });
