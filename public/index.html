@@ -407,7 +407,7 @@ function clearDrawing(){
 }
 
 // QUESTION MANAGEMENT
-async function questions(el){
+ async function questions(el){
  const list=await api("/api/questions");
 
  el.innerHTML=`<section class="panel">
@@ -415,15 +415,12 @@ async function questions(el){
  <form id="questionForm" onsubmit="addQuestion(event)">
   <label>Question</label>
   <textarea name="text" required></textarea>
-
   <div class="formgrid">
-   ${[0,1,2,3].map(i=>`
-    <div>
-     <label>Option ${"ABCD"[i]}</label>
-     <input name="o${i}" required>
-    </div>`).join("")}
+   ${[0,1,2,3].map(i=>`<div>
+    <label>Option ${"ABCD"[i]}</label>
+    <input name="o${i}" required>
+   </div>`).join("")}
   </div>
-
   <div class="formgrid">
    <div><label>Correct option</label>
     <select name="answer">
@@ -433,11 +430,10 @@ async function questions(el){
      <option value="3">D</option>
     </select>
    </div>
-   <div><label>Subject</label><input name="subject" placeholder="Mathematics"></div>
-   <div><label>Class</label><input name="className" placeholder="SS2"></div>
+   <div><label>Subject</label><input name="subject"></div>
+   <div><label>Class</label><input name="className"></div>
    <div><label>Topic</label><input name="topic"></div>
   </div>
-
   ${drawingBoard()}
   <button type="submit">Save question</button>
  </form>
@@ -445,17 +441,80 @@ async function questions(el){
 
  <section class="panel">
  <h2>Question bank (${list.length})</h2>
- ${list.map(q=>`<div class="item">
+ <label>Search questions</label>
+ <input id="questionSearch" type="search"
+  placeholder="Search question, subject, class or topic..."
+  oninput="filterQuestions()">
+
+ <div id="questionBankList">
+ ${list.map(q=>`<div class="item question-bank-item"
+  data-search="${esc([q.text,q.subject,q.className,q.topic].join(" ").toLowerCase())}">
   <b>${esc(q.text)}</b>
   ${q.image?`<img class="question-image" src="${q.image}" alt="Question diagram">`:""}
   <p class="muted">${esc(q.subject)} · ${esc(q.className)} · ${esc(q.topic)}</p>
   ${q.answer===undefined?"":`<span class="pill">Answer: ${"ABCD"[q.answer]}</span>`}
-  <button class="danger" style="float:right" onclick="deleteQuestion('${q.id}')">Delete</button>
-  <div style="clear:both"></div>
+  <button class="secondary" onclick="editQuestion('${q.id}')">Edit</button>
+  <button class="danger" onclick="deleteQuestion('${q.id}')">Delete</button>
  </div>`).join("")||"<p>No questions saved yet.</p>"}
+ </div>
+ <p id="questionSearchEmpty" class="muted" hidden>No matching questions.</p>
  </section>`;
 
  setupDrawingBoard();
+}
+
+function filterQuestions(){
+ const query=String(document.getElementById("questionSearch")?.value||"").trim().toLowerCase();
+ let visible=0;
+
+ document.querySelectorAll(".question-bank-item").forEach(item=>{
+  const match=item.dataset.search.includes(query);
+  item.hidden=!match;
+  if(match)visible++;
+ });
+
+ const empty=document.getElementById("questionSearchEmpty");
+ if(empty)empty.hidden=visible!==0;
+}
+
+async function editQuestion(id){
+ try{
+  const list=await api("/api/questions");
+  const q=list.find(item=>item.id===id);
+  if(!q)throw Error("Question not found.");
+
+  const text=prompt("Edit question",q.text);
+  if(text===null)return;
+
+  const options=[];
+  for(let i=0;i<4;i++){
+   const value=prompt("Edit option "+ "ABCD"[i],q.options[i]);
+   if(value===null)return;
+   options.push(value);
+  }
+
+  const answerText=prompt("Correct option (A, B, C or D)","ABCD"[q.answer]||"A");
+  if(answerText===null)return;
+  const answer="ABCD".indexOf(answerText.trim().toUpperCase());
+  if(answer<0)throw Error("Enter A, B, C or D.");
+
+  const subject=prompt("Subject",q.subject||"");
+  if(subject===null)return;
+  const className=prompt("Class",q.className||"");
+  if(className===null)return;
+  const topic=prompt("Topic",q.topic||"");
+  if(topic===null)return;
+
+  await api("/api/questions/"+id,{
+   method:"PATCH",
+   body:JSON.stringify({
+    text,options,answer,subject,className,topic,image:q.image||""
+   })
+  });
+
+  alert("Question updated.");
+  loadTab();
+ }catch(e){alert(e.message)}
 }
 
 async function addQuestion(event){
@@ -598,20 +657,73 @@ async function monitor(id){
 }
 
 // RESULTS
-async function results(el){
+ async function results(el){
  const list=await api("/api/results");
 
+ const examsMap=new Map();
+
+ list.forEach(r=>{
+  if(!examsMap.has(r.exam))examsMap.set(r.exam,[]);
+  examsMap.get(r.exam).push(r);
+ });
+
+ const rankingHtml=[...examsMap.entries()].map(([examName,rows])=>{
+  rows.sort((a,b)=>Number(b.percentage)-Number(a.percentage));
+
+  return `<div class="item">
+   <b>${esc(examName)} — Student rankings</b>
+   ${rows.map((r,i)=>`
+    <p>${i+1}. ${esc(r.student)} — ${r.score}/${r.total} (${r.percentage}%)</p>
+   `).join("")}
+  </div>`;
+ }).join("");
+
+ const classes=new Map();
+
+ list.forEach(r=>{
+  const key=r.className||"Class not recorded";
+  if(!classes.has(key))classes.set(key,[]);
+  classes.get(key).push(Number(r.percentage)||0);
+ });
+
+ const averagesHtml=[...classes.entries()].map(([name,scores])=>{
+  const average=scores.reduce((sum,value)=>sum+value,0)/scores.length;
+
+  return `<div class="item">
+   <b>${esc(name)}</b>
+   <p>Class average: ${average.toFixed(1)}% · ${scores.length} result(s)</p>
+  </div>`;
+ }).join("");
+
  el.innerHTML=`<section class="panel">
- <h2>Exam results</h2>
+ <div class="row" style="justify-content:space-between">
+  <h2>Exam results</h2>
+  <a href="/api/results/export.csv">
+   <button type="button">Download CSV</button>
+  </a>
+ </div>
+
+ <p class="muted">Download results visible to your account.</p>
+
  ${list.map(r=>`<div class="item">
   <b>${esc(r.student)}</b> — ${esc(r.exam)}
   <p>${r.score}/${r.total} (${r.percentage}%)</p>
-  <p class="muted">${new Date(r.submittedAt).toLocaleString()}</p>
-  ${me.role==="admin"&&r.attemptId?`
-   <button class="secondary" onclick="approveRetake('${r.attemptId}')">Approve retake</button>`:""}
+  <p class="muted">${esc(r.className||"Class not recorded")} · ${new Date(r.submittedAt).toLocaleString()}</p>
+  ${me.role==="admin"&&r.attemptId?
+   `<button class="secondary" onclick="approveRetake('${r.attemptId}')">Approve retake</button>`:""}
  </div>`).join("")||"<p>No submitted results yet.</p>"}
+ </section>
+
+ <section class="panel">
+  <h2>Student rankings</h2>
+  ${rankingHtml||"<p class='muted'>Rankings will appear after students submit exams.</p>"}
+ </section>
+
+ <section class="panel">
+  <h2>Class averages</h2>
+  ${averagesHtml||"<p class='muted'>Class averages will appear after results are available.</p>"}
  </section>`;
-}
+ }
 
 async function approveRetake(id){
  if(!confirm("Approve another attempt for this student?"))return;
