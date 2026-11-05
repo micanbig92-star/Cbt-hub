@@ -778,6 +778,21 @@ app.post("/api/offline/sync-results", (req, res) => {
     rejected
   });
 });
+// Student result history
+app.get("/api/student/results", requireLogin, (req, res) => {
+  const user = currentUser(req);
+
+  if (user.role !== "student") {
+    return res.status(403).json({ error: "Student account required." });
+  }
+
+  const results = db.attempts
+    .filter(a => a.studentId === user.id && a.result)
+    .map(a => ({ ...a.result, attemptId: a.id }));
+
+  results.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+  res.json(results);
+});
 // Results
 app.get("/api/results", requireStaff, (req, res) => {
   const user = currentUser(req);
