@@ -344,7 +344,60 @@ app.post("/api/questions", requireQuestionPermission, (req, res) => {
     question: { ...question, answer: undefined }
   });
 });
+// Edit an existing question
+app.patch("/api/questions/:id", requireQuestionPermission, (req, res) => {
+  const question = db.questions.find(q => q.id === req.params.id);
 
+  if (!question) {
+    return res.status(404).json({ error: "Question not found." });
+  }
+
+  const user = currentUser(req);
+
+  if (user.role !== "admin" && question.owner !== user.id) {
+    return res.status(403).json({
+      error: "You can only edit your own questions."
+    });
+  }
+
+  const text = String(req.body.text || "").trim();
+  const options = req.body.options;
+  const answer = Number(req.body.answer);
+  const image = String(req.body.image || "");
+
+  if (
+    !text ||
+    !Array.isArray(options) ||
+    options.length !== 4 ||
+    options.some(option => !String(option).trim()) ||
+    ![0, 1, 2, 3].includes(answer)
+  ) {
+    return res.status(400).json({
+      error: "Enter a question, four options and a correct answer."
+    });
+  }
+
+  if (
+    image &&
+    (!image.startsWith("data:image/png;base64,") || image.length > 1800000)
+  ) {
+    return res.status(400).json({
+      error: "The drawing must be a PNG image within the allowed limit."
+    });
+  }
+
+  question.text = text;
+  question.options = options.map(option => String(option).trim());
+  question.answer = answer;
+  question.image = image;
+  question.subject = String(req.body.subject || "General").trim();
+  question.className = String(req.body.className || "").trim();
+  question.topic = String(req.body.topic || "").trim();
+
+  save();
+
+  res.json({ ok: true, question });
+});
 app.delete("/api/questions/:id", requireQuestionPermission, (req, res) => {
   const question = db.questions.find(q => q.id === req.params.id);
   if (!question) return res.status(404).json({ error: "Question not found." });
@@ -628,6 +681,7 @@ attempt.syncedAt = null;
   attempt.status = "submitted";
   attempt.result = {
     student: user.username,
+    className: user.className || "",
     exam: exam.title,
     examId: exam.id,
     score,
@@ -656,7 +710,61 @@ app.get("/api/results", requireStaff, (req, res) => {
 
   res.json(results);
 });
+// Download exam results as CSV
+app.get("/api/results/export.csv", requireStaff, (req, res) => {
+  const user = currentUser(req);
 
+  const results = db.attempts
+    .filter(a => a.result && (
+      user.role === "admin" ||
+      db.exams.find(e => e.id === a.examId)?.creator === user.id
+    ))
+    .map(a => a.result);
+
+  const columns = [
+    "Student",
+    "Class",
+    "Exam",
+    "Score",
+    "Total",
+    "Percentage",
+    "Date"
+  ];
+
+  const csvCell = value => {
+    let text = String(value ?? "");
+
+    // Prevent spreadsheet formula injection.
+    if (/^[=+\-@]/.test(text)) {
+      text = "'" + text;
+    }
+
+    return '"' + text.replace(/"/g, '""') + '"';
+  };
+
+  const rows = results.map(result => [
+    result.student,
+    result.className || "Class not recorded",
+    result.exam,
+    result.score,
+    result.total,
+    result.percentage + "%",
+    result.submittedAt
+  ]);
+
+  const csv = [
+    columns.map(csvCell).join(","),
+    ...rows.map(row => row.map(csvCell).join(","))
+  ].join("\r\n");
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="cbt-results.csv"'
+  );
+
+  res.send("\uFEFF" + csv);
+});
 app.post("/api/retakes/:id/approve", requireAdmin, (req, res) => {
   const attempt = db.attempts.find(
     a => a.id === req.params.id && a.submitted
