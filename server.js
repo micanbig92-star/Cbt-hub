@@ -854,11 +854,12 @@ app.get("/api/network", (req, res) => {
   res.json({
     listening: "0.0.0.0",
     port: Number(PORT),
-    localAddresses: addresses
+});    localAddresses: addresses
   });
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
-});
 });
 app.listen(PORT, "0.0.0.0", () => {
   console.log("CBT HUB running on port " + PORT);
