@@ -853,8 +853,8 @@ app.get("/api/network", (req, res) => {
 
   res.json({
     listening: "0.0.0.0",
-    port: Number(PORT),
-});    localAddresses: addresses
+       port: Number(PORT),
+    localAddresses: addresses 
   });
 });
 
