@@ -833,9 +833,6 @@ app.get("/api/offline/export-results", requireAdmin, (req, res) => {
   res.setHeader("Content-Type", "application/json");
   res.send(JSON.stringify(backup, null, 2));
 });
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
 // PHONE LOCAL NETWORK ADDRESS
 app.get("/api/network", (req, res) => {
   const interfaces = os.networkInterfaces();
@@ -859,6 +856,9 @@ app.get("/api/network", (req, res) => {
     port: Number(PORT),
     localAddresses: addresses
   });
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 });
 app.listen(PORT, "0.0.0.0", () => {
   console.log("CBT HUB running on port " + PORT);
