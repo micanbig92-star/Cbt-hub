@@ -735,7 +735,7 @@ async function approveRetake(id){
 }
 
 // STUDENT PORTAL
-function studentHome(){
+ function studentHome(){
  exam=null;
  shell(`<section class="panel">
   <h1>Student portal</h1>
@@ -747,7 +747,31 @@ function studentHome(){
    <input name="code" required maxlength="12" autocapitalize="characters">
    <button style="margin-top:12px">Enter exam</button>
   </form>
+  <button class="secondary" style="margin-top:16px" onclick="studentResults()">My Result History</button>
  </section>`);
+}
+
+async function studentResults(){
+ try{
+  const list=await api("/api/student/results");
+  shell(`<section class="panel">
+   <div class="row" style="justify-content:space-between">
+    <h1>My Result History</h1>
+    <button class="secondary" onclick="studentHome()">Back to portal</button>
+   </div>
+   ${list.map(r=>`<div class="item">
+    <b>${esc(r.exam)}</b>
+    <p>${r.score}/${r.total} (${r.percentage}%)</p>
+    <p class="muted">${esc(r.className||"Class not recorded")} · ${new Date(r.submittedAt).toLocaleString()}</p>
+   </div>`).join("")||"<p class='muted'>You have no submitted exam results yet.</p>"}
+  </section>`);
+ }catch(e){
+  shell(`<section class="panel">
+   <h2>Unable to load result history</h2>
+   ${errorBox(e.message)}
+   <button class="secondary" onclick="studentHome()">Back to portal</button>
+  </section>`);
+ }
 }
 
 async function startExam(event){
