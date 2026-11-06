@@ -284,7 +284,18 @@ app.patch("/api/users/:id", requireAdmin, (req, res) => {
   save();
   res.json({ user: safeUser(user) });
 });
+// Delete a non-administrator account while keeping exam results.
+app.delete("/api/users/:id", requireAdmin, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
 
+  if (!user || user.role === "admin") {
+    return res.status(404).json({ error: "Account not found." });
+  }
+
+  db.users = db.users.filter(u => u.id !== user.id);
+  save();
+  res.json({ ok: true });
+});
 // Questions
 app.get("/api/questions", requireStaff, (req, res) => {
   const user = currentUser(req);
