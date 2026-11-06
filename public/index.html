@@ -262,8 +262,46 @@ async function loadTab(){
 }
 
 // ADMIN USER MANAGEMENT
-async function users(el){
+ async function users(el){
  const list=await api("/api/users");
+ const students=list.filter(u=>u.role==="student");
+ const teachers=list.filter(u=>u.role==="teacher");
+
+ const classes={};
+ students.forEach(u=>{
+  const c=String(u.className||"Class not assigned").trim();
+  if(!classes[c])classes[c]=[];
+  classes[c].push(u);
+ });
+
+ const studentHtml=Object.keys(classes).sort().map(c=>`
+  <details class="item">
+   <summary><b>${esc(c)}</b> — ${classes[c].length} student(s)</summary>
+   ${classes[c].map(u=>`
+    <div class="item">
+     <b>${esc(u.username)}</b>
+     <span class="pill">${u.approved?"Approved":"Pending"}</span>
+     <button class="secondary" onclick="deleteUser('${u.id}','${esc(u.username)}')">Delete account</button>
+    </div>
+   `).join("")}
+  </details>
+ `).join("")||"<p>No students yet.</p>";
+
+ const teacherHtml=teachers.map(u=>`
+  <div class="item">
+   <b>${esc(u.username)}</b>
+   <span class="pill">${u.approved?"Approved":"Pending"}</span>
+   <div class="row">
+    <button class="secondary" onclick="changeUser('${u.id}',{approved:${!u.approved}})">
+     ${u.approved?"Revoke approval":"Approve teacher"}
+    </button>
+    <button class="secondary" onclick="changeUser('${u.id}',{canManageQuestions:${!u.canManageQuestions}})">
+     ${u.canManageQuestions?"Revoke question access":"Grant question access"}
+    </button>
+    <button class="secondary" onclick="deleteUser('${u.id}','${esc(u.username)}')">Delete account</button>
+   </div>
+  </div>
+ `).join("")||"<p>No teachers yet.</p>";
 
  el.innerHTML=`<section class="panel">
  <h2>Create account</h2>
@@ -283,27 +321,14 @@ async function users(el){
  </form>
  </section>
  <section class="panel">
- <h2>Accounts</h2>
- ${list.map(u=>`<div class="item">
-  <div class="row">
-   <div><b>${esc(u.username)}</b>
-    <div class="muted">${esc(u.role)} · ${esc(u.className||"No class")}</div>
-   </div>
-   <span class="pill">${u.approved?"Approved":"Pending"}</span>
-  </div>
-  ${u.role==="teacher"?`
-   <div class="row">
-    <button class="secondary" onclick="changeUser('${u.id}',{approved:${!u.approved}})">
-     ${u.approved?"Revoke approval":"Approve teacher"}
-    </button>
-    <button class="secondary" onclick="changeUser('${u.id}',{canManageQuestions:${!u.canManageQuestions}})">
-     ${u.canManageQuestions?"Revoke question access":"Grant question access"}
-    </button>
-   </div>`:""}
- </div>`).join("")||"<p>No accounts yet.</p>"}
+  <h2>Students by class</h2>
+  ${studentHtml}
+ </section>
+ <section class="panel">
+  <h2>Teachers</h2>
+  ${teacherHtml}
  </section>`;
-}
-
+ }
 async function createUser(event){
  event.preventDefault();
  try{
@@ -325,6 +350,14 @@ async function changeUser(id,body){
   loadTab();
  }catch(e){alert(e.message)}
 }
+ async function deleteUser(id,username){
+ if(!confirm("Delete the account for "+username+"? Previous exam results will be kept."))return;
+ try{
+  await api("/api/users/"+id,{method:"DELETE"});
+  alert("Account deleted. Previous exam results have been kept.");
+  loadTab();
+ }catch(e){alert(e.message)}
+ }
 
 // DRAWING BOARD
 function drawingBoard(){
@@ -666,17 +699,35 @@ async function monitor(id){
   if(!examsMap.has(r.exam))examsMap.set(r.exam,[]);
   examsMap.get(r.exam).push(r);
  });
+  const rankingHtml=[...examsMap.entries()].map(([examName,rows])=>{
+   const classGroups=new Map();
 
- const rankingHtml=[...examsMap.entries()].map(([examName,rows])=>{
-  rows.sort((a,b)=>Number(b.percentage)-Number(a.percentage));
+   rows.forEach(r=>{
+    const className=String(r.className||"Class not recorded").trim();
+    if(!classGroups.has(className))classGroups.set(className,[]);
+    classGroups.get(className).push(r);
+   });
 
-  return `<div class="item">
-   <b>${esc(examName)} — Student rankings</b>
-   ${rows.map((r,i)=>`
-    <p>${i+1}. ${esc(r.student)} — ${r.score}/${r.total} (${r.percentage}%)</p>
-   `).join("")}
-  </div>`;
- }).join("");
+   const classRankingHtml=[...classGroups.entries()]
+    .sort((a,b)=>a[0].localeCompare(b[0]))
+    .map(([className,classRows])=>{
+     classRows.sort((a,b)=>Number(b.percentage)-Number(a.percentage));
+
+     return `<details class="item" open>
+      <summary><b>${esc(className)}</b> — ${classRows.length} result(s)</summary>
+      <div style="margin-top:10px">
+       ${classRows.map((r,i)=>`
+        <p>${i+1}. ${esc(r.student)} — ${r.score}/${r.total} (${r.percentage}%)</p>
+       `).join("")}
+      </div>
+     </details>`;
+    }).join("");
+
+   return `<div class="item">
+    <b>${esc(examName)} — Student rankings by class</b>
+    ${classRankingHtml}
+   </div>`;
+  }).join("");
 
  const classes=new Map();
 
