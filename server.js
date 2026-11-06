@@ -525,7 +525,55 @@ app.post("/api/exams/:id/control", requireAdmin, (req, res) => {
   save();
   res.json({ ok: true });
 });
+// Admin: delete an ended exam without deleting its saved results.
+app.delete("/api/exams/:id", requireAdmin, (req, res) => {
+  const exam = db.exams.find(e => e.id === req.params.id);
 
+  if (!exam) {
+    return res.status(404).json({ error: "Exam not found." });
+  }
+
+  if (exam.status !== "ended") {
+    return res.status(400).json({
+      error: "Only ended exams can be deleted."
+    });
+  }
+
+  db.exams = db.exams.filter(e => e.id !== exam.id);
+  save();
+  res.json({ ok: true, resultsPreserved: true });
+});
+
+// Admin: delete one student's saved result.
+app.delete("/api/results/:attemptId", requireAdmin, (req, res) => {
+  const attempt = db.attempts.find(a => a.id === req.params.attemptId);
+
+  if (!attempt || !attempt.result) {
+    return res.status(404).json({ error: "Result not found." });
+  }
+
+  attempt.result = null;
+  save();
+  res.json({ ok: true });
+});
+
+// Admin: delete all saved results for one exam.
+app.delete("/api/results/exam/:examId", requireAdmin, (req, res) => {
+  const matching = db.attempts.filter(
+    a => a.examId === req.params.examId && a.result
+  );
+
+  if (!matching.length) {
+    return res.status(404).json({ error: "No results found for this exam." });
+  }
+
+  matching.forEach(a => {
+    a.result = null;
+  });
+
+  save();
+  res.json({ ok: true, deleted: matching.length });
+});
 function examRemaining(exam) {
   if (exam.running && !exam.paused) {
     return Math.max(
