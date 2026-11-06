@@ -774,7 +774,17 @@ async function monitor(id){
   `:""}
  </div>`).join("")||"<p>No submitted results yet.</p>"}
  </section>
-
+ <section class="panel">
+  <h2>Manage exam results</h2>
+  ${[...new Map(list.map(r=>[r.examId,r])).values()].map(r=>`
+   <div class="item">
+    <b>${esc(r.exam)}</b>
+    <button class="danger" onclick="clearExamResults('${r.examId}','${esc(r.exam)}')">
+     Delete all results for this exam
+    </button>
+   </div>
+  `).join("")||"<p>No exam results to manage.</p>"}
+ </section>
  <section class="panel">
   <h2>Student rankings</h2>
   ${rankingHtml||"<p class='muted'>Rankings will appear after students submit exams.</p>"}
