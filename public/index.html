@@ -302,9 +302,8 @@ async function loadTab(){
    </div>
   </div>
  `).join("")||"<p>No teachers yet.</p>";
-
- el.innerHTML=`<section class="panel">
- <h2>Create account</h2>
+el.innerHTML=`<details class="panel" open>
+ <summary><b>Create account</b></summary>
  <form onsubmit="createUser(event)">
   <div class="formgrid">
    <div><label>Username</label><input name="username" required minlength="3"></div>
@@ -319,9 +318,9 @@ async function loadTab(){
   </div>
   <button>Create account</button>
  </form>
- </section>
- <section class="panel">
-  <h2>Students by class</h2>
+  </details>
+ <details class="panel">
+  <summary><b>Students by class</b></summary>
   ${studentHtml}
  </section>
  <section class="panel">
