@@ -731,7 +731,11 @@ app.get("/api/results", requireStaff, (req, res) => {
       user.role === "admin" ||
       db.exams.find(e => e.id === a.examId)?.creator === user.id
     ))
-    .map(a => ({ ...a.result, attemptId: a.id }));
+    .map(a => ({
+      ...a.result,
+      attemptId: a.id,
+      examId: a.examId
+    }));
 
   res.json(results);
 });
