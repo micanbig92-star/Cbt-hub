@@ -442,8 +442,8 @@ function clearDrawing(){
  async function questions(el){
  const list=await api("/api/questions");
 
- el.innerHTML=`<section class="panel">
- <h2>Add a question</h2>
+el.innerHTML=`<details class="panel" open>
+ <summary><b>Add a question</b></summary>
  <form id="questionForm" onsubmit="addQuestion(event)">
   <label>Question</label>
   <textarea name="text" required></textarea>
@@ -471,8 +471,10 @@ function clearDrawing(){
  </form>
  </section>
 
- <section class="panel">
- <h2>Question bank (${list.length})</h2>
+ </details>
+
+ <details class="panel">
+ <summary><b>Question bank (${list.length})</b></summary>
  <label>Search questions</label>
  <input id="questionSearch" type="search"
   placeholder="Search question, subject, class or topic..."
@@ -490,7 +492,7 @@ function clearDrawing(){
  </div>`).join("")||"<p>No questions saved yet.</p>"}
  </div>
  <p id="questionSearchEmpty" class="muted" hidden>No matching questions.</p>
- </section>`;
+ </details>`;
 
  setupDrawingBoard();
 }
