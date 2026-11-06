@@ -321,12 +321,12 @@ el.innerHTML=`<details class="panel" open>
   </details>
  <details class="panel">
   <summary><b>Students by class</b></summary>
-  ${studentHtml}
- </section>
- <section class="panel">
-  <h2>Teachers</h2>
+    ${studentHtml}
+ </details>
+ <details class="panel">
+  <summary><b>Teachers</b></summary>
   ${teacherHtml}
- </section>`;
+ </details>`;
  }
 async function createUser(event){
  event.preventDefault();
