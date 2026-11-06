@@ -768,8 +768,10 @@ async function monitor(id){
   <b>${esc(r.student)}</b> — ${esc(r.exam)}
   <p>${r.score}/${r.total} (${r.percentage}%)</p>
   <p class="muted">${esc(r.className||"Class not recorded")} · ${new Date(r.submittedAt).toLocaleString()}</p>
-  ${me.role==="admin"&&r.attemptId?
-   `<button class="secondary" onclick="approveRetake('${r.attemptId}')">Approve retake</button>`:""}
+  ${me.role==="admin"&&r.attemptId?`
+   <button class="secondary" onclick="approveRetake('${r.attemptId}')">Approve retake</button>
+   <button class="danger" onclick="deleteResult('${r.attemptId}')">Delete result</button>
+  `:""}
  </div>`).join("")||"<p>No submitted results yet.</p>"}
  </section>
 
@@ -783,7 +785,23 @@ async function monitor(id){
   ${averagesHtml||"<p class='muted'>Class averages will appear after results are available.</p>"}
  </section>`;
  }
+async function deleteResult(id){
+ if(!confirm("Permanently delete this student's result?"))return;
+ try{
+  await api("/api/results/"+id,{method:"DELETE"});
+  alert("Result deleted. Rankings and class averages will update.");
+  loadTab();
+ }catch(e){alert(e.message)}
+}
 
+async function clearExamResults(examId,examName){
+ if(!confirm("Delete ALL saved results for "+examName+"? This cannot be undone."))return;
+ try{
+  await api("/api/results/exam/"+examId,{method:"DELETE"});
+  alert("Results deleted. Rankings and class averages will update.");
+  loadTab();
+ }catch(e){alert(e.message)}
+            }
 async function approveRetake(id){
  if(!confirm("Approve another attempt for this student?"))return;
  try{
