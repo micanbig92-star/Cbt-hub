@@ -642,11 +642,19 @@ async function exams(el){
     <button class="secondary" onclick="controlExam('${e.id}','resume')">Resume</button>
     <button class="danger" onclick="controlExam('${e.id}','end')">End</button>
     <button class="secondary" onclick="monitor('${e.id}')">Monitor</button>
+    ${e.status==="ended"?`<button class="danger" onclick="deleteEndedExam('${e.id}','${esc(e.title)}')">Delete ended exam</button>`:""}
    </div>`:""}
  </div>`).join("")||"<p>No exams created yet.</p>"}
  </section>`;
 }
-
+async function deleteEndedExam(id,title){
+ if(!confirm("Delete ended exam "+title+"? Student results will be kept."))return;
+ try{
+  await api("/api/exams/"+id,{method:"DELETE"});
+  alert("Exam deleted. Student results have been kept.");
+  loadTab();
+ }catch(e){alert(e.message)}
+}
 async function createExam(event){
  event.preventDefault();
  const form=new FormData(event.target);
