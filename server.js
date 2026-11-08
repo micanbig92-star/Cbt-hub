@@ -38,7 +38,17 @@ function makeId(prefix) {
   return prefix + "_" + Date.now().toString(36) +
     Math.random().toString(36).slice(2, 8);
 }
+// Shuffle questions randomly using Fisher-Yates.
+function shuffleArray(items) {
+  const shuffled = [...items];
 
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  return shuffled;
+}
 function currentUser(req) {
   return db.users.find(user => user.id === req.session.uid);
 }
@@ -661,9 +671,15 @@ app.post("/api/student/start", requireLogin, (req, res) => {
   activeStudent.status = "writing";
   activeStudent.lastSeen = attempt.lastSeen;
 
-  const questions = exam.questionIds
-    .map(id => db.questions.find(q => q.id === id))
-    .filter(Boolean);
+  // Save a randomized question order for each student's attempt.
+if (!Array.isArray(attempt.questionOrder) ||
+    attempt.questionOrder.length !== exam.questionIds.length) {
+  attempt.questionOrder = shuffleArray(exam.questionIds);
+}
+
+const questions = attempt.questionOrder
+  .map(id => db.questions.find(q => q.id === id))
+  .filter(Boolean);
 
   save();
 
