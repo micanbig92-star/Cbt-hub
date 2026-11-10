@@ -605,9 +605,8 @@ app.get("/api/exams/:id/monitor", requireAdmin, (req, res) => {
     students: exam.active
   });
 });
-
-// Student exam routes
-app.post("/api/student/start", requireLogin, (req, res) => {
+// Show the subjects available in an exam before the student starts.
+app.post("/api/student/subjects", requireLogin, (req, res) => {
   const user = currentUser(req);
 
   if (user.role !== "student") {
@@ -618,6 +617,7 @@ app.post("/api/student/start", requireLogin, (req, res) => {
   const exam = db.exams.find(e => e.code === code);
 
   if (!exam) return res.status(404).json({ error: "Invalid exam code." });
+
   if (Date.now() > Date.parse(exam.expiresAt)) {
     return res.status(410).json({ error: "This exam code has expired." });
   }
@@ -629,6 +629,83 @@ app.post("/api/student/start", requireLogin, (req, res) => {
 
   if (!exam.running || exam.status !== "running") {
     return res.status(403).json({ error: "The exam has not started." });
+  }
+
+  const subjects = [...new Set(
+    exam.questionIds
+      .map(id => db.questions.find(q => q.id === id))
+      .filter(Boolean)
+      .map(q => String(q.subject || "General").trim() || "General")
+  )].sort();
+
+  res.json({
+    title: exam.title,
+    duration: exam.duration,
+    subjects
+  });
+});
+// Student exam routes
+
+app.post("/api/student/start", requireLogin, (req, res) => {
+  const user = currentUser(req);
+
+  if (user.role !== "student") {
+    return res.status(403).json({ error: "A student account is required." });
+  }
+
+  const code = String(req.body.code || "").trim().toUpperCase();
+  const exam = db.exams.find(e => e.code === code);
+
+  if (!exam) return res.status(404).json({ error: "Invalid exam code." });
+
+  if (Date.now() > Date.parse(exam.expiresAt)) {
+    return res.status(410).json({ error: "This exam code has expired." });
+  }
+
+  if (exam.className &&
+      exam.className.toLowerCase() !== String(user.className || "").toLowerCase()) {
+    return res.status(403).json({ error: "This exam is not assigned to your class." });
+  }
+
+  if (!exam.running || exam.status !== "running") {
+    return res.status(403).json({ error: "The exam has not started." });
+  }
+
+  const availableSubjects = [...new Set(
+    exam.questionIds
+      .map(id => db.questions.find(q => q.id === id))
+      .filter(Boolean)
+      .map(q => String(q.subject || "General").trim() || "General")
+  )];
+
+  const requestedSubjects = Array.isArray(req.body.subjects)
+    ? [...new Set(req.body.subjects.map(s => String(s).trim()).filter(Boolean))]
+    : [];
+
+  let selectedSubjects;
+
+  if (availableSubjects.length >= 4) {
+    if (
+      requestedSubjects.length !== 4 ||
+      requestedSubjects.some(subject =>
+        !availableSubjects.some(
+          available => available.toLowerCase() === subject.toLowerCase()
+        )
+      )
+    ) {
+      return res.status(400).json({
+        error: "Choose exactly four available subjects."
+      });
+    }
+
+    selectedSubjects = availableSubjects.filter(subject =>
+      requestedSubjects.some(
+        chosen => chosen.toLowerCase() === subject.toLowerCase()
+      )
+    );
+  } else {
+    // Preserve the existing behaviour for exams with fewer than four subjects.
+    selectedSubjects = availableSubjects;
   }
 
   let attempt = db.attempts.find(
@@ -645,6 +722,8 @@ app.post("/api/student/start", requireLogin, (req, res) => {
     attempt.submitted = false;
     attempt.retakeApproved = false;
     attempt.answers = {};
+    attempt.questionOrder = null;
+    attempt.selectedSubjects = null;
   }
 
   if (!attempt) {
@@ -656,21 +735,82 @@ app.post("/api/student/start", requireLogin, (req, res) => {
       answers: {},
       submitted: false
     };
+
     db.attempts.push(attempt);
+  }
+
+  const selectedIds = exam.questionIds.filter(id => {
+    const question = db.questions.find(q => q.id === id);
+    const subject = String(question?.subject || "General").trim() || "General";
+
+    return selectedSubjects.some(
+      chosen => chosen.toLowerCase() === subject.toLowerCase()
+    );
+  });
+
+  // A student cannot change subjects after beginning the exam.
+  if (
+    Array.isArray(attempt.questionOrder) &&
+    Array.isArray(attempt.selectedSubjects) &&
+    JSON.stringify([...attempt.selectedSubjects].sort()) !==
+    JSON.stringify([...selectedSubjects].sort())
+  ) {
+    return res.status(409).json({
+      error: "You already started this exam with a different subject selection."
+    });
+  }
+
+  // Save the student's randomized question order.
+  if (
+    !Array.isArray(attempt.questionOrder) ||
+    attempt.questionOrder.length !== selectedIds.length
+  ) {
+    attempt.questionOrder = shuffleArray(selectedIds);
+    attempt.selectedSubjects = selectedSubjects;
+    attempt.answers = {};
   }
 
   attempt.status = "writing";
   attempt.lastSeen = new Date().toISOString();
 
   let activeStudent = exam.active.find(s => s.studentId === user.id);
+
   if (!activeStudent) {
-    activeStudent = { studentId: user.id, student: user.username };
+    activeStudent = {
+      studentId: user.id,
+      student: user.username
+    };
+
     exam.active.push(activeStudent);
   }
 
   activeStudent.status = "writing";
   activeStudent.lastSeen = attempt.lastSeen;
 
+  const questions = attempt.questionOrder
+    .map(id => db.questions.find(q => q.id === id))
+    .filter(Boolean);
+
+  save();
+
+  res.json({
+    examId: exam.id,
+    title: exam.title,
+    duration: exam.duration,
+    remainingSeconds: examRemaining(exam),
+    selectedSubjects: attempt.selectedSubjects || selectedSubjects,
+
+    questions: questions.map(q => ({
+      id: q.id,
+      text: q.text,
+      options: q.options,
+      image: q.image || "",
+      subject: String(q.subject || "General").trim() || "General"
+    })),
+
+    answers: attempt.answers
+  });
+});
   // Save a randomized question order for each student's attempt.
 if (!Array.isArray(attempt.questionOrder) ||
     attempt.questionOrder.length !== exam.questionIds.length) {
@@ -724,9 +864,92 @@ app.post("/api/student/save", requireLogin, (req, res) => {
 
 app.post("/api/student/submit", requireLogin, (req, res) => {
   const user = currentUser(req);
+
   if (user.role !== "student") {
     return res.status(403).json({ error: "Student account required." });
   }
+
+  const exam = db.exams.find(e => e.id === req.body.examId);
+
+  const attempt = db.attempts.find(
+    a => a.examId === req.body.examId && a.studentId === user.id
+  );
+
+  if (!exam || !attempt || attempt.submitted) {
+    return res.status(409).json({
+      error: "Attempt unavailable or already submitted."
+    });
+  }
+
+  const incoming = req.body.answers && typeof req.body.answers === "object"
+    ? req.body.answers
+    : {};
+
+  attempt.answers = { ...attempt.answers, ...incoming };
+
+  const questionIds = Array.isArray(attempt.questionOrder)
+    ? attempt.questionOrder
+    : exam.questionIds;
+
+  const questions = questionIds
+    .map(id => db.questions.find(q => q.id === id))
+    .filter(Boolean);
+
+  const score = questions.filter(
+    q => Number(attempt.answers[q.id]) === q.answer
+  ).length;
+
+  // Calculate each subject separately.
+  const subjectScores = {};
+
+  questions.forEach(q => {
+    const subject = String(q.subject || "General").trim() || "General";
+
+    if (!subjectScores[subject]) {
+      subjectScores[subject] = {
+        score: 0,
+        total: 0
+      };
+    }
+
+    subjectScores[subject].total++;
+
+    if (Number(attempt.answers[q.id]) === q.answer) {
+      subjectScores[subject].score++;
+    }
+  });
+
+  attempt.syncStatus = "pending";
+  attempt.syncedAt = null;
+  attempt.submitted = true;
+  attempt.status = "submitted";
+
+  attempt.result = {
+    student: user.username,
+    className: user.className || "",
+    exam: exam.title,
+    examId: exam.id,
+    score,
+    total: questions.length,
+    percentage: Math.round(
+      score / Math.max(1, questions.length) * 100
+    ),
+    subjectScores,
+    submittedAt: new Date().toISOString()
+  };
+
+  const activeStudent = exam.active.find(
+    s => s.studentId === user.id
+  );
+
+  if (activeStudent) {
+    activeStudent.status = "submitted";
+  }
+
+  save();
+
+  res.json(attempt.result);
+});
 
   const exam = db.exams.find(e => e.id === req.body.examId);
   const attempt = db.attempts.find(
