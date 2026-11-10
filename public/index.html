@@ -861,20 +861,92 @@ async function studentResults(){
  }
 }
 
-async function startExam(event){
- event.preventDefault();
+ async function startExam(event) {
+  event.preventDefault();
 
- try{
-  exam=await api("/api/student/start",{
-   method:"POST",
-   body:JSON.stringify({
-    code:new FormData(event.target).get("code")
-   })
-  });
+  const code = String(
+    new FormData(event.target).get("code") || ""
+  ).trim().toUpperCase();
 
-  answers={...exam.answers};
-  renderExam();
- }catch(e){alert(e.message)}
+  try {
+    const info = await api("/api/student/subjects", {
+      method: "POST",
+      body: JSON.stringify({ code })
+    });
+
+    if (info.subjects.length >= 4) {
+      showSubjectPicker(code, info);
+    } else {
+      await beginStudentExam(code, []);
+    }
+
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+function showSubjectPicker(code, info) {
+  shell(`<section class="panel">
+    <h1>Choose your four subjects</h1>
+
+    <p><b>${esc(info.title)}</b></p>
+
+    <p class="muted">
+      Select exactly four subjects.
+      The ${info.duration}-minute timer covers all four subjects together.
+    </p>
+
+    <form onsubmit="beginSelectedSubjects(event, '${code}')">
+
+      ${info.subjects.map(subject => `
+        <label class="option">
+          <input type="checkbox" name="subjects" value="${esc(subject)}">
+          ${esc(subject)}
+        </label>
+      `).join("")}
+
+      <button style="margin-top:12px">
+        Start examination
+      </button>
+
+      <button type="button" class="secondary"
+        onclick="studentHome()">
+        Cancel
+      </button>
+
+    </form>
+  </section>`);
+}
+
+async function beginSelectedSubjects(event, code) {
+  event.preventDefault();
+
+  const subjects = new FormData(event.target).getAll("subjects");
+
+  if (subjects.length !== 4) {
+    alert("Please select exactly four subjects.");
+    return;
+  }
+
+  await beginStudentExam(code, subjects);
+}
+
+async function beginStudentExam(code, subjects) {
+  try {
+    exam = await api("/api/student/start", {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        subjects
+      })
+    });
+
+    answers = { ...exam.answers };
+    renderExam();
+
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 // STUDENT EXAM DISPLAY
@@ -882,7 +954,9 @@ function renderExam(){
  clearInterval(timerId);
  clearInterval(saveId);
 
- let seconds=exam.duration*60;
+ let seconds = Number.isFinite(Number(exam.remainingSeconds))
+  ? Number(exam.remainingSeconds)
+  : exam.duration * 60;
 
  shell(`<section class="panel">
   <div class="row" style="justify-content:space-between">
@@ -895,6 +969,11 @@ function renderExam(){
 
   <div id="paper">
    ${exam.questions.map((q,i)=>`<div class="question">
+
+    ${i === 0 || exam.questions[i-1].subject !== q.subject
+      ? `<h3>${esc(q.subject || "General")}</h3>`
+      : ""}
+
     <b>${i+1}. ${esc(q.text)}</b>
     ${q.image?`<img class="question-image" src="${q.image}" alt="Question diagram">`:""}
     ${q.options.map((option,j)=>`
@@ -965,7 +1044,18 @@ async function submitExam(auto=false){
     <span>Your score · ${result.percentage}%</span>
    </div>
    <p>Your answers have been submitted successfully.</p>
-   <button onclick="studentHome()">Back to portal</button>
+
+${result.subjectScores
+  ? '<h2>Subject scores</h2>' +
+    Object.entries(result.subjectScores).map(([subject, score]) => `
+      <div class="item">
+        <b>${esc(subject)}</b>
+        <p>${score.score}/${score.total} questions</p>
+      </div>
+    `).join("")
+  : ""}
+
+<button onclick="studentHome()">Back to portal</button>
   </section>`);
  }catch(e){
   alert(e.message);
