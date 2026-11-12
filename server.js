@@ -690,12 +690,13 @@ app.post("/api/student/start", requireLogin, (req, res) => {
     });
   }
 
-  if (requestedSubjects.length < 4 ||
-      requestedSubjects.some(subject =>
-        !availableSubjects.some(
-          available => available.toLowerCase() === subject.toLowerCase()
-        )
+  if (
+    requestedSubjects.length < 4 ||
+    requestedSubjects.some(subject =>
+      !availableSubjects.some(
+        available => available.toLowerCase() === subject.toLowerCase()
       )
+    )
   ) {
     return res.status(400).json({
       error: "Choose at least four available subjects."
