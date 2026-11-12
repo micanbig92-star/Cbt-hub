@@ -684,29 +684,30 @@ app.post("/api/student/start", requireLogin, (req, res) => {
 
   let selectedSubjects;
 
-  if (availableSubjects.length >= 4) {
-    if (
-      requestedSubjects.length !== 4 ||
-      requestedSubjects.some(subject =>
-        !availableSubjects.some(
-          available => available.toLowerCase() === subject.toLowerCase()
-        )
-      )
-    ) {
-      return res.status(400).json({
-        error: "Choose exactly four available subjects."
-      });
-    }
+  if (availableSubjects.length < 4) {
+  return res.status(400).json({
+    error: "This exam must have at least four available subjects."
+  });
+}
 
-    selectedSubjects = availableSubjects.filter(subject =>
-      requestedSubjects.some(
-        chosen => chosen.toLowerCase() === subject.toLowerCase()
-      )
-    );
-  } else {
-    // Preserve the existing behaviour for exams with fewer than four subjects.
-    selectedSubjects = availableSubjects;
-  }
+if (
+  requestedSubjects.length < 4 ||
+  requestedSubjects.some(subject =>
+    !availableSubjects.some(
+      available => available.toLowerCase() === subject.toLowerCase()
+    )
+  )
+) {
+  return res.status(400).json({
+    error: "Choose at least four available subjects."
+  });
+}
+
+selectedSubjects = availableSubjects.filter(subject =>
+  requestedSubjects.some(
+    chosen => chosen.toLowerCase() === subject.toLowerCase()
+  )
+);
 
   let attempt = db.attempts.find(
     a => a.examId === exam.id && a.studentId === user.id
