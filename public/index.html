@@ -923,8 +923,8 @@ async function beginSelectedSubjects(event, code) {
 
   const subjects = new FormData(event.target).getAll("subjects");
 
-  if (subjects.length !== 4) {
-    alert("Please select exactly four subjects.");
+  if (subjects.length < 4) {
+    alert("Please select at least four subjects.");
     return;
   }
 
