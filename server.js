@@ -684,29 +684,29 @@ app.post("/api/student/start", requireLogin, (req, res) => {
 
   let selectedSubjects;
 
-  if (availableSubjects.length >= 4) {
-    if (
-      requestedSubjects.length !== 4 ||
+  if (availableSubjects.length < 4) {
+    return res.status(400).json({
+      error: "This exam must have at least four available subjects."
+    });
+  }
+
+  if (requestedSubjects.length < 4 ||
       requestedSubjects.some(subject =>
         !availableSubjects.some(
           available => available.toLowerCase() === subject.toLowerCase()
         )
       )
-    ) {
-      return res.status(400).json({
-        error: "Choose exactly four available subjects."
-      });
-    }
-
-    selectedSubjects = availableSubjects.filter(subject =>
-      requestedSubjects.some(
-        chosen => chosen.toLowerCase() === subject.toLowerCase()
-      )
-    );
-  } else {
-    // Preserve the existing behaviour for exams with fewer than four subjects.
-    selectedSubjects = availableSubjects;
+  ) {
+    return res.status(400).json({
+      error: "Choose at least four available subjects."
+    });
   }
+
+  selectedSubjects = availableSubjects.filter(subject =>
+    requestedSubjects.some(
+      chosen => chosen.toLowerCase() === subject.toLowerCase()
+    )
+  );
 
   let attempt = db.attempts.find(
     a => a.examId === exam.id && a.studentId === user.id
@@ -808,31 +808,6 @@ app.post("/api/student/start", requireLogin, (req, res) => {
       subject: String(q.subject || "General").trim() || "General"
     })),
 
-    answers: attempt.answers
-  });
-});
-  // Save a randomized question order for each student's attempt.
-if (!Array.isArray(attempt.questionOrder) ||
-    attempt.questionOrder.length !== exam.questionIds.length) {
-  attempt.questionOrder = shuffleArray(exam.questionIds);
-}
-
-const questions = attempt.questionOrder
-  .map(id => db.questions.find(q => q.id === id))
-  .filter(Boolean);
-
-  save();
-
-  res.json({
-    examId: exam.id,
-    title: exam.title,
-    duration: exam.duration,
-    questions: questions.map(q => ({
-      id: q.id,
-      text: q.text,
-      options: q.options,
-      image: q.image || ""
-    })),
     answers: attempt.answers
   });
 });
@@ -948,50 +923,6 @@ app.post("/api/student/submit", requireLogin, (req, res) => {
 
   save();
 
-  res.json(attempt.result);
-});
-
-  const exam = db.exams.find(e => e.id === req.body.examId);
-  const attempt = db.attempts.find(
-    a => a.examId === req.body.examId && a.studentId === user.id
-  );
-
-  if (!exam || !attempt || attempt.submitted) {
-    return res.status(409).json({ error: "Attempt unavailable or already submitted." });
-  }
-
-  const incoming = req.body.answers && typeof req.body.answers === "object"
-    ? req.body.answers
-    : {};
-
-  attempt.answers = { ...attempt.answers, ...incoming };
-
-  const questions = exam.questionIds
-    .map(id => db.questions.find(q => q.id === id))
-    .filter(Boolean);
-
-  const score = questions.filter(
-    q => Number(attempt.answers[q.id]) === q.answer
-  ).length;
-attempt.syncStatus = "pending";
-attempt.syncedAt = null;
-  attempt.submitted = true;
-  attempt.status = "submitted";
-  attempt.result = {
-    student: user.username,
-    className: user.className || "",
-    exam: exam.title,
-    examId: exam.id,
-    score,
-    total: questions.length,
-    percentage: Math.round(score / Math.max(1, questions.length) * 100),
-    submittedAt: new Date().toISOString()
-  };
-
-  const activeStudent = exam.active.find(s => s.studentId === user.id);
-  if (activeStudent) activeStudent.status = "submitted";
-
-  save();
   res.json(attempt.result);
 });
 // Student result history

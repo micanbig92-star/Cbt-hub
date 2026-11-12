@@ -887,12 +887,12 @@ async function studentResults(){
 
 function showSubjectPicker(code, info) {
   shell(`<section class="panel">
-    <h1>Choose your four subjects</h1>
+    <h1>Choose your subjects</h1>
 
     <p><b>${esc(info.title)}</b></p>
 
     <p class="muted">
-      Select exactly four subjects.
+      Select at least four subjects.
       The ${info.duration}-minute timer covers all four subjects together.
     </p>
 
@@ -923,8 +923,8 @@ async function beginSelectedSubjects(event, code) {
 
   const subjects = new FormData(event.target).getAll("subjects");
 
-  if (subjects.length !== 4) {
-    alert("Please select exactly four subjects.");
+  if (subjects.length < 4) {
+    alert("Please select at least four subjects.");
     return;
   }
 
