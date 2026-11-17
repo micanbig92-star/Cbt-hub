@@ -6,15 +6,15 @@
 <meta name="theme-color" content="#102b55">
 <title>MICAN CBT HUB | School Examination Portal</title>
 <style>
-:root{font-family:Arial,sans-serif;color:#17243b;background:#f3f6fb}
+:root{--school-color:#2563eb;font-family:Arial,sans-serif;color:#17243b;background:#f3f6fb}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh}
 button,input,select,textarea{font:inherit}
-button{cursor:pointer;border:0;border-radius:10px;padding:11px 15px;background:#174b91;color:white;font-weight:bold}
+button{cursor:pointer;border:0;border-radius:10px;padding:11px 15px;background:var(--school-color);color:white;font-weight:bold}
 button.secondary{background:#e8eef8;color:#174b91}
 button.danger{background:#b83245}
 button:disabled{opacity:.5;cursor:not-allowed}
-.top{background:#102b55;color:white;padding:18px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.top{background:var(--school-color);color:white;padding:18px;display:flex;justify-content:space-between;align-items:center;gap:12px}
 .brand{font-size:22px;font-weight:850}
 .brand small{display:block;font-size:11px;opacity:.75}
 .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
@@ -58,10 +58,13 @@ textarea{min-height:75px}
 <body>
 <div id="app"><div class="loading">Loading CBT HUB…</div></div>
 
+
 <script>
 const app=document.getElementById("app");
 let me=null,tab="overview",exam=null,answers={},timerId=null,saveId=null;
+let examSecondsRemaining=0,examSubjectIndex=0,examQuestionIndex=0;
 let drawingData="";
+let schoolBranding={schoolName:"MICAN CBT HUB",primaryColor:"#2563eb",academicSession:"",term:""};
 
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({
  "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -79,9 +82,24 @@ async function api(url,opts={}){
  return d;
 }
 
+async function loadSchoolBranding(){
+ try{
+  schoolBranding=await api("/api/school-branding");
+  document.documentElement.style.setProperty(
+    "--school-color",
+    /^#[0-9a-fA-F]{6}$/.test(schoolBranding.primaryColor || "")
+      ? schoolBranding.primaryColor
+      : "#2563eb"
+  );
+  document.title=(schoolBranding.schoolName||"MICAN CBT HUB")+" | School Examination Portal";
+ }catch(e){
+  console.warn("School branding could not be loaded:",e.message);
+ }
+}
+
 function headerBar(){
  return `<header class="top">
-  <div class="brand">MICAN CBT HUB<small>SCHOOL EXAMINATION PORTAL</small></div>
+  <div class="brand"><span id="portalSchoolName">${esc(schoolBranding.schoolName||"MICAN CBT HUB")}</span><small>SCHOOL EXAMINATION PORTAL</small></div>
   <div class="right">${me?`
    <span>${esc(me.username)} · ${esc(me.role)}</span>
    <button class="secondary" onclick="logout()">Logout</button>`:""}
@@ -99,6 +117,7 @@ function errorBox(message){
 
 async function init(){
  try{
+  await loadSchoolBranding();
   app.innerHTML='<div class="loading">Checking CBT HUB...</div>';
   const status=await api("/api/status");
   me=status.user;
@@ -208,7 +227,7 @@ function dashboard(){
  }
 
  const tabs=me.role==="admin"
-  ?["overview","users","questions","exams","results"]
+  ?["overview","users","questions","exams","timetable","certificates","results","school-settings"]
   :["overview","questions","exams","results"];
 
  if(!tabs.includes(tab))tab="overview";
@@ -218,7 +237,7 @@ function dashboard(){
  <nav class="tabs">
  ${tabs.map(t=>`
   <button class="${tab===t?"active":""}" onclick="tab='${t}';dashboard()">
-   ${t[0].toUpperCase()+t.slice(1)}
+   ${t==="school-settings"?"School Settings":t[0].toUpperCase()+t.slice(1)}
   </button>`).join("")}
  </nav>
  <div id="content"></div>`);
@@ -254,7 +273,10 @@ async function loadTab(){
   if(tab==="users")await users(el);
   if(tab==="questions")await questions(el);
   if(tab==="exams")await exams(el);
+  if(tab==="timetable"&&me.role==="admin")await timetable(el);
+  if(tab==="certificates"&&me.role==="admin")await certificates(el);
   if(tab==="results")await results(el);
+  if(tab==="school-settings"&&me.role==="admin")await schoolSettings(el);
 
  }catch(e){
   el.innerHTML=errorBox(e.message);
@@ -262,7 +284,222 @@ async function loadTab(){
 }
 
 // ADMIN USER MANAGEMENT
- async function users(el){
+
+async function schoolSettings(el){
+ if(me.role!=="admin")return;
+
+ const settings=await api("/api/school-settings");
+
+ el.innerHTML=`
+ <section class="panel">
+  <h2>School Settings</h2>
+  <p class="muted">Customize your school's examination portal.</p>
+  <form id="schoolSettingsForm">
+   <label>School logo</label>
+   ${settings.schoolLogo?`<img src="${esc(settings.schoolLogo)}" alt="Current school logo" style="display:block;max-width:150px;max-height:110px;object-fit:contain;margin:10px 0">`:"<p class='muted'>No logo uploaded yet.</p>"}
+   <input type="hidden" name="schoolLogo" value="${esc(settings.schoolLogo||"")}">
+   <input name="schoolLogoFile" type="file" accept="image/png,image/jpeg,image/webp">
+   <label><input type="checkbox" name="clearSchoolLogo"> Remove current logo</label>
+   <label>School name</label>
+   <input name="schoolName" maxlength="100" required value="${esc(settings.schoolName||"")}">
+
+   <label>School colour</label>
+   <input name="primaryColor" type="color" value="${esc(settings.primaryColor||"#2563eb")}">
+
+   <label>Academic session</label>
+   <input name="academicSession" maxlength="30" placeholder="2026/2027" value="${esc(settings.academicSession||"")}">
+
+   <label>Current term</label>
+   <input name="term" maxlength="30" placeholder="First Term" value="${esc(settings.term||"")}">
+
+   <button type="submit">Save School Settings</button>
+  </form>
+ </section>`;
+
+ document.getElementById("schoolSettingsForm").onsubmit=async function(e){
+  e.preventDefault();
+  const form=e.target;
+  const data=Object.fromEntries(new FormData(form).entries());
+  const file=form.elements.schoolLogoFile.files[0];
+  delete data.schoolLogoFile;
+  delete data.clearSchoolLogo;
+
+  if(form.elements.clearSchoolLogo.checked){
+   data.schoolLogo="";
+  }else if(file){
+   if(!["image/png","image/jpeg","image/webp"].includes(file.type)){
+    alert("Please choose a PNG, JPG or WebP image.");
+    return;
+   }
+   if(file.size>1400000){
+    alert("Please choose a logo smaller than 1.4 MB.");
+    return;
+   }
+   data.schoolLogo=await new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=()=>reject(new Error("Could not read the logo image."));
+    reader.readAsDataURL(file);
+   });
+  }
+
+  try{
+   await api("/api/school-settings",{
+    method:"PUT",
+    body:JSON.stringify(data)
+   });
+   await loadSchoolBranding();
+   alert("School settings saved successfully.");
+   await schoolSettings(el);
+  }catch(error){
+   alert(error.message);
+  }
+ };
+}
+
+
+function startCertificateSignature(event){
+ event.preventDefault();
+ const canvas=event.currentTarget;
+ canvas.setPointerCapture(event.pointerId);
+ const rect=canvas.getBoundingClientRect();
+ const x=(event.clientX-rect.left)*canvas.width/rect.width;
+ const y=(event.clientY-rect.top)*canvas.height/rect.height;
+ const ctx=canvas.getContext("2d");
+ ctx.strokeStyle="#14213d";
+ ctx.lineWidth=5;
+ ctx.lineCap="round";
+ ctx.lineJoin="round";
+ ctx.beginPath();
+ ctx.moveTo(x,y);
+ window.certificateSignatureDrawn=true;
+}
+
+function drawCertificateSignature(event){
+ const canvas=event.currentTarget;
+ if(!canvas.hasPointerCapture(event.pointerId))return;
+ event.preventDefault();
+ const rect=canvas.getBoundingClientRect();
+ const x=(event.clientX-rect.left)*canvas.width/rect.width;
+ const y=(event.clientY-rect.top)*canvas.height/rect.height;
+ const ctx=canvas.getContext("2d");
+ ctx.lineTo(x,y);
+ ctx.stroke();
+}
+
+function stopCertificateSignature(event){
+ const canvas=event.currentTarget;
+ if(canvas.hasPointerCapture(event.pointerId)){
+  canvas.releasePointerCapture(event.pointerId);
+ }
+}
+
+function clearCertificateSignature(){
+ const canvas=document.getElementById("certificateSignaturePad");
+ if(!canvas)return;
+ canvas.getContext("2d").clearRect(0,0,canvas.width,canvas.height);
+ window.certificateSignatureDrawn=false;
+}
+
+async function certificates(el){
+ const [usersList, issued]=await Promise.all([
+  api("/api/users"), api("/api/certificates")
+ ]);
+ const students=usersList.filter(u=>u.role==="student");
+
+ el.innerHTML=`<section class="panel">
+  <h2>Issue Examination Certificate</h2>
+  <form onsubmit="issueCertificate(event)">
+   <label>Student</label>
+   <select name="studentId" required>
+    <option value="">Choose student</option>
+    ${students.map(u=>`<option value="${u.id}">${esc(u.username)} — ${esc(u.className||"No class")}</option>`).join("")}
+   </select>
+   <label>Examination title</label>
+   <input name="examination" required maxlength="200">
+   <label>Certificate details</label>
+   <textarea name="details" maxlength="200" placeholder="Achievement or examination description"></textarea>
+   <label>Authorised signatory name</label>
+   <input name="signatory" required maxlength="200">
+   <label>Signatory designation</label>
+   <input name="designation" required maxlength="200" placeholder="Principal / Vice Rector">
+
+   <label>Authorised signature</label>
+   <p class="muted">Draw below with your finger or mouse, or upload a signature image.</p>
+   <canvas id="certificateSignaturePad" width="900" height="240"
+    style="display:block;width:100%;height:150px;background:#fff;border:2px solid #9ca3af;border-radius:8px;touch-action:none"
+    onpointerdown="startCertificateSignature(event)"
+    onpointermove="drawCertificateSignature(event)"
+    onpointerup="stopCertificateSignature(event)"
+    onpointercancel="stopCertificateSignature(event)"></canvas>
+   <button type="button" class="secondary" onclick="clearCertificateSignature()">Clear drawing</button>
+   <label>Or upload signature image</label>
+   <input name="signatureFile" type="file" accept="image/png,image/jpeg,image/webp">
+   <button ${students.length?"":"disabled"}>Issue Certificate</button>
+  </form>
+ </section>
+ <section class="panel">
+  <h2>Issued Certificates</h2>
+  ${issued.map(c=>`<div class="item">
+   <b>${esc(c.studentName)}</b>
+   <p>${esc(c.examination)} · ${esc(c.className)}</p>
+   <p>${new Date(c.issuedAt).toLocaleDateString()}</p>
+   <button class="danger" onclick="deleteCertificate('${c.id}')">Revoke certificate</button>
+  </div>`).join("")||"<p>No certificates issued yet.</p>"}
+ </section>`;
+}
+
+async function issueCertificate(event){
+ event.preventDefault();
+ const form=event.target;
+ const data=Object.fromEntries(new FormData(form).entries());
+ const file=form.elements.signatureFile.files[0];
+ delete data.signatureFile;
+
+ try{
+  if(file){
+   if(!["image/png","image/jpeg","image/webp"].includes(file.type)){
+    alert("Choose a PNG, JPG or WebP signature image.");
+    return;
+   }
+   if(file.size>1000000){
+    alert("Please use a signature image smaller than 1 MB.");
+    return;
+   }
+   data.signatureImage=await new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=()=>reject(new Error("Could not read the signature image."));
+    reader.readAsDataURL(file);
+   });
+  }else{
+   const canvas=document.getElementById("certificateSignaturePad");
+   if(!window.certificateSignatureDrawn){
+    alert("Please draw a signature or upload a signature image.");
+    return;
+   }
+   data.signatureImage=canvas.toDataURL("image/png");
+  }
+
+  await api("/api/certificates",{
+   method:"POST",
+   body:JSON.stringify(data)
+  });
+  alert("Certificate issued successfully.");
+  window.certificateSignatureDrawn=false;
+  loadTab();
+ }catch(e){alert(e.message)}
+}
+
+async function deleteCertificate(id){
+ if(!confirm("Revoke this certificate?"))return;
+ try{
+  await api("/api/certificates/"+id,{method:"DELETE"});
+  loadTab();
+ }catch(e){alert(e.message)}
+}
+
+async function users(el){
  const list=await api("/api/users");
  const students=list.filter(u=>u.role==="student");
  const teachers=list.filter(u=>u.role==="teacher");
@@ -444,7 +681,9 @@ function clearDrawing(){
 
 el.innerHTML=`<details class="panel" open>
  <summary><b>Add a question</b></summary>
- <form id="questionForm" onsubmit="addQuestion(event)">
+
+
+<form id="questionForm" onsubmit="addQuestion(event)">
   <label>Question</label>
   <textarea name="text" required></textarea>
   <div class="formgrid">
@@ -495,6 +734,8 @@ el.innerHTML=`<details class="panel" open>
 
  setupDrawingBoard();
 }
+
+
 
 function filterQuestions(){
  const query=String(document.getElementById("questionSearch")?.value||"").trim().toLowerCase();
@@ -604,6 +845,12 @@ async function exams(el){
   api("/api/questions")
  ]);
 
+ const groupedQuestions = questionList.reduce((groups, q) => {
+  const subject = (q.subject || "Unassigned").trim();
+  (groups[subject] ||= []).push(q);
+  return groups;
+ }, {});
+
  el.innerHTML=`<section class="panel">
  <h2>Create an exam</h2>
  <form onsubmit="createExam(event)">
@@ -614,13 +861,18 @@ async function exams(el){
    <div><label>Duration (minutes)</label><input name="duration" type="number" min="1" max="480" value="60"></div>
    <div><label>Code expiry (hours)</label><input name="expiryHours" type="number" min="1" max="720" value="24"></div>
   </div>
-  <label>Choose questions</label>
+  <label>Choose questions by subject</label>
+  <p>Select the questions you want from each subject bank.</p>
   <div class="item">
-   ${questionList.map(q=>`
-    <label class="option">
-     <input type="checkbox" name="questionIds" value="${q.id}">
-     ${esc(q.text)} (${esc(q.subject)})
-    </label>`).join("")||"Add questions first."}
+   ${Object.keys(groupedQuestions).sort().map(subject=>`
+    <details class="item">
+     <summary><b>${esc(subject)}</b> (${groupedQuestions[subject].length} questions)</summary>
+     ${groupedQuestions[subject].map(q=>`
+      <label class="option">
+       <input type="checkbox" name="questionIds" value="${q.id}">
+       ${esc(q.text)}
+      </label>`).join("")}
+    </details>`).join("")||"Add questions first."}
   </div>
   <button ${questionList.length?"":"disabled"}>Create exam</button>
  </form>
@@ -647,6 +899,60 @@ async function exams(el){
  </div>`).join("")||"<p>No exams created yet.</p>"}
  </section>`;
 }
+
+async function timetable(el){
+ const entries=await api("/api/timetable");
+ el.innerHTML=`<section class="panel">
+  <h2>Schedule an examination</h2>
+  <form onsubmit="saveTimetable(event)">
+   <label>Class</label><input name="className" placeholder="SS2" required>
+   <label>Subject</label><input name="subject" required>
+   <div class="formgrid">
+    <div><label>Examination date</label><input type="date" name="date" required></div>
+    <div><label>Start time</label><input type="time" name="startTime" required></div>
+    <div><label>Duration (minutes)</label><input type="number" name="duration" min="1" max="480" value="60" required></div>
+   </div>
+   <button>Save timetable</button>
+  </form>
+ </section>
+ <section class="panel">
+  <h2>Scheduled examinations</h2>
+  ${entries.map(x=>`<div class="item">
+   <b>${esc(x.subject)}</b>
+   <p>Class: ${esc(x.className)}</p>
+   <p>${esc(x.date)} · ${esc(x.startTime)} · ${x.duration} minutes</p>
+   <button class="danger" onclick="deleteTimetable('${x.id}')">Delete schedule</button>
+  </div>`).join("")||"<p>No timetable entries yet.</p>"}
+ </section>`;
+}
+
+async function saveTimetable(event){
+ event.preventDefault();
+ const form=new FormData(event.target);
+ try{
+  await api("/api/timetable",{
+   method:"POST",
+   body:JSON.stringify({
+    className:form.get("className"),
+    subject:form.get("subject"),
+    date:form.get("date"),
+    startTime:form.get("startTime"),
+    duration:form.get("duration")
+   })
+  });
+  alert("Examination timetable saved.");
+  loadTab();
+ }catch(e){alert(e.message)}
+}
+
+async function deleteTimetable(id){
+ if(!confirm("Delete this timetable entry?"))return;
+ try{
+  await api("/api/timetable/"+id,{method:"DELETE"});
+  loadTab();
+ }catch(e){alert(e.message)}
+}
+
 async function deleteEndedExam(id,title){
  if(!confirm("Delete ended exam "+title+"? Student results will be kept."))return;
  try{
@@ -835,7 +1141,100 @@ async function approveRetake(id){
    <button style="margin-top:12px">Enter exam</button>
   </form>
   <button class="secondary" style="margin-top:16px" onclick="studentResults()">My Result History</button>
+  <button class="secondary" style="margin-top:10px" onclick="studentReportCards()">My Report Cards</button>
+  <button class="secondary" style="margin-top:10px" onclick="studentTimetable()">My Examination Timetable</button>
+  <button class="secondary" style="margin-top:10px" onclick="studentCertificates()">My Certificates</button>
  </section>`);
+}
+
+
+async function studentTimetable(){
+ try{
+  const entries=await api("/api/student/timetable");
+  shell(`<section class="panel">
+   <div class="row" style="justify-content:space-between">
+    <h1>My Examination Timetable</h1>
+    <button class="secondary" onclick="studentHome()">Back</button>
+   </div>
+   ${entries.map(x=>`<div class="item">
+    <b>${esc(x.subject)}</b>
+    <p>Class: ${esc(x.className)}</p>
+    <p>Date: ${esc(x.date)}</p>
+    <p>Start time: ${esc(x.startTime)}</p>
+    <p>Duration: ${x.duration} minutes</p>
+   </div>`).join("")||"<p class='muted'>No examinations have been scheduled for your class yet.</p>"}
+  </section>`);
+ }catch(e){
+  shell(`<section class="panel"><h2>Unable to load timetable</h2>
+   ${errorBox(e.message)}
+   <button class="secondary" onclick="studentHome()">Back</button></section>`);
+ }
+}
+
+
+async function studentCertificates(){
+ try{
+  const list=await api("/api/student/certificates");
+  shell(`<section class="panel">
+   <div class="row" style="justify-content:space-between">
+    <h1>My Certificates</h1>
+    <button class="secondary" onclick="studentHome()">Back</button>
+   </div>
+   ${list.map(c=>`<article class="certificate-print" style="box-sizing:border-box;position:relative;width:100%;min-height:520px;padding:42px 55px;margin:22px auto;text-align:center;border:10px double var(--school-color,#2563eb);outline:2px solid #c5a45b;outline-offset:-19px;background:linear-gradient(135deg,#fffdf4,#ffffff 55%,#f3f7ff);color:#172554">
+    ${c.schoolLogo?`<img src="${esc(c.schoolLogo)}" alt="School logo" style="display:block;margin:0 auto 16px;max-width:130px;max-height:100px;object-fit:contain">`:""}
+    <p style="letter-spacing:4px;font-size:13px;font-weight:bold;color:#9a7937">OFFICIAL SCHOOL RECOGNITION</p>
+    <h2 style="margin:8px 0;color:var(--school-color,#2563eb);letter-spacing:2px">${esc(c.schoolName)}</h2>
+    <h1 style="font-family:Georgia,serif;font-size:34px;letter-spacing:3px;margin:18px 0">CERTIFICATE</h1>
+    <h3 style="letter-spacing:5px;color:#9a7937;margin:0 0 22px">OF ACHIEVEMENT</h3>
+    <p style="font-size:17px">This certificate is proudly presented to</p>
+    <h2 style="font-family:Georgia,serif;font-size:30px;text-decoration:underline;text-decoration-color:#c5a45b;text-underline-offset:8px">${esc(c.studentName)}</h2>
+    <p>Class: ${esc(c.className||"—")}</p>
+    <p>For participation in / completion of</p>
+    <h3>${esc(c.examination)}</h3>
+    <p>${esc(c.details||"")}</p>
+    <p>Academic session: ${esc(c.academicSession||"—")}</p>
+    <p>Issued: ${new Date(c.issuedAt).toLocaleDateString()}</p>
+    <div style="display:flex;justify-content:space-around;align-items:flex-end;gap:30px;margin-top:35px;flex-wrap:wrap">
+     <div style="min-width:220px">
+      ${c.signatureImage?`<img src="${esc(c.signatureImage)}" alt="Authorised signature" style="display:block;width:190px;height:65px;object-fit:contain;margin:0 auto">`:""}
+      <div style="border-top:1px solid #172554;padding-top:8px">
+       <p style="margin:4px 0"><b>${esc(c.signatory)}</b></p>
+       <p style="margin:4px 0">${esc(c.designation)}</p>
+       <p style="margin:4px 0;font-size:12px">Authorised Signatory</p>
+      </div>
+     </div>
+     <div style="min-width:160px">
+      <div style="border-top:1px solid #172554;padding-top:8px">
+       <p style="margin:4px 0"><b>${new Date(c.issuedAt).toLocaleDateString()}</b></p>
+       <p style="margin:4px 0;font-size:12px">Date of Issue</p>
+      </div>
+     </div>
+    </div>
+    <small style="display:block;margin-top:18px;color:#64748b">Certificate ID: ${esc(c.id)}</small>
+   </article>`).join("")||"<p class='muted'>No certificates have been issued to you yet.</p>"}
+   ${list.length?'<button onclick="window.print()">Print / Save as PDF</button>':""}
+  </section>
+  <style>
+   @page{size:A4 landscape;margin:10mm}
+   @media print{
+    button{display:none!important}
+    .certificate-print{
+     break-inside:avoid;
+     page-break-inside:avoid;
+     width:100%!important;
+     min-height:175mm!important;
+     margin:0!important;
+     color:#111!important;
+     -webkit-print-color-adjust:exact;
+     print-color-adjust:exact;
+    }
+   }
+  </style>`);
+ }catch(e){
+  shell(`<section class="panel"><h2>Unable to load certificates</h2>
+   ${errorBox(e.message)}
+   <button class="secondary" onclick="studentHome()">Back</button></section>`);
+ }
 }
 
 async function studentResults(){
@@ -861,7 +1260,54 @@ async function studentResults(){
  }
 }
 
- async function startExam(event) {
+
+async function studentReportCards(){
+ try{
+  const reports=await api("/api/student/report-cards");
+  const schoolName=schoolBranding.schoolName||"MICAN CBT HUB";
+  shell(`<section class="panel">
+   <div class="row" style="justify-content:space-between">
+    <h1>My Report Cards</h1>
+    <button class="secondary" onclick="studentHome()">Back</button>
+   </div>
+   ${reports.map(r=>`<article class="item report-card" style="padding:20px;margin-top:16px">
+    <div style="text-align:center">
+     <h2>${esc(schoolName)}</h2>
+     <h3>STUDENT EXAMINATION REPORT CARD</h3>
+     <p>${esc(r.exam)}</p>
+    </div>
+    <hr>
+    <p><b>Student:</b> ${esc(me.username)}</p>
+    <p><b>Class:</b> ${esc(r.className||me.className||"Not recorded")}</p>
+    <p><b>Date:</b> ${r.submittedAt?new Date(r.submittedAt).toLocaleDateString():"—"}</p>
+    <table style="width:100%;border-collapse:collapse">
+     <thead><tr><th style="text-align:left">Subject</th><th>Score</th><th>Percentage</th><th>Grade</th></tr></thead>
+     <tbody>${(r.subjects||[]).map(x=>`<tr>
+      <td>${esc(x.subject)}</td><td style="text-align:center">${x.score}/${x.total}</td>
+      <td style="text-align:center">${x.percentage}%</td><td style="text-align:center">${esc(x.grade)}</td>
+     </tr>`).join("")}</tbody>
+    </table>
+    <hr>
+    <p><b>Overall score:</b> ${r.score}/${r.total} (${r.percentage}%)</p>
+    <p><b>Overall grade:</b> ${esc(r.overallGrade)}</p>
+    <p><b>Class position:</b> ${r.classPosition} of ${r.classSize}</p>
+    <p style="margin-top:35px">________________________<br>Class Teacher's Signature</p>
+   </article>`).join("")||"<p class='muted'>No report cards are available yet.</p>"}
+   ${reports.length?'<button onclick="window.print()">Print / Save as PDF</button>':""}
+  </section>
+  <style>@media print{
+   body{background:white!important}
+   button{display:none!important}
+   .report-card{break-inside:avoid;border:1px solid #999!important;color:#111!important;background:white!important}
+  }</style>`);
+ }catch(e){
+  shell(`<section class="panel"><h2>Unable to load report cards</h2>
+   ${errorBox(e.message)}
+   <button class="secondary" onclick="studentHome()">Back</button></section>`);
+ }
+}
+
+async function startExam(event) {
   event.preventDefault();
 
   const code = String(
@@ -954,52 +1400,26 @@ function renderExam(){
  clearInterval(timerId);
  clearInterval(saveId);
 
- let seconds = Number.isFinite(Number(exam.remainingSeconds))
+ examSecondsRemaining = Number.isFinite(Number(exam.remainingSeconds))
   ? Number(exam.remainingSeconds)
   : exam.duration * 60;
 
- shell(`<section class="panel">
-  <div class="row" style="justify-content:space-between">
-   <div>
-    <h1>${esc(exam.title)}</h1>
-    <p class="muted">Answer all questions, then submit.</p>
-   </div>
-   <div class="timer" id="timer">${Math.floor(seconds/60)}:00</div>
-  </div>
+ examSubjectIndex = 0;
+ examQuestionIndex = 0;
 
-  <div id="paper">
-   ${exam.questions.map((q,i)=>`<div class="question">
-
-    ${i === 0 || exam.questions[i-1].subject !== q.subject
-      ? `<h3>${esc(q.subject || "General")}</h3>`
-      : ""}
-
-    <b>${i+1}. ${esc(q.text)}</b>
-    ${q.image?`<img class="question-image" src="${q.image}" alt="Question diagram">`:""}
-    ${q.options.map((option,j)=>`
-     <label class="option">
-      <input type="radio" name="${q.id}" value="${j}"
-       ${String(answers[q.id])===String(j)?"checked":""}
-       onchange="answers['${q.id}']=this.value">
-      ${"ABCD"[j]}. ${esc(option)}
-     </label>`).join("")}
-   </div>`).join("")}
-  </div>
-
-  <button onclick="submitExam()">Submit exam</button>
- </section>`);
+ renderExamPage();
 
  timerId=setInterval(()=>{
-  seconds--;
+  examSecondsRemaining = Math.max(0, examSecondsRemaining - 1);
   const timer=document.getElementById("timer");
 
   if(timer){
    timer.textContent=
-    Math.floor(Math.max(0,seconds)/60)+":"+
-    String(Math.max(0,seconds)%60).padStart(2,"0");
+    Math.floor(examSecondsRemaining/60)+":"+
+    String(examSecondsRemaining%60).padStart(2,"0");
   }
 
-  if(seconds<=0){
+  if(examSecondsRemaining<=0){
    clearInterval(timerId);
    submitExam(true);
   }
@@ -1018,9 +1438,147 @@ function renderExam(){
  },15000);
 }
 
+function renderExamPage(){
+ if(!exam)return;
+
+ const subjectNames = exam.selectedSubjects?.length
+  ? exam.selectedSubjects
+  : [...new Set(exam.questions.map(q=>q.subject || "General"))];
+
+ const subject = subjectNames[examSubjectIndex];
+ const questions = exam.questions.filter(q=>
+  (q.subject || "General") === subject
+ );
+
+ if(!questions.length){
+  alert("No questions found for this subject.");
+  return;
+ }
+
+ examQuestionIndex = Math.min(
+  examQuestionIndex,
+  questions.length - 1
+ );
+
+ const q = questions[examQuestionIndex];
+
+ shell(`<section class="panel">
+  <div class="row" style="justify-content:space-between">
+   <div>
+    <h1>${esc(exam.title)}</h1>
+    <p class="muted">Subject ${examSubjectIndex+1} of ${subjectNames.length}</p>
+   </div>
+   <div class="timer" id="timer">
+    ${Math.floor(examSecondsRemaining/60)}:${String(examSecondsRemaining%60).padStart(2,"0")}
+   </div>
+  </div>
+
+  <h2>${esc(subject)}</h2>
+
+  <div class="row" style="flex-wrap:wrap">
+   ${subjectNames.map((name,i)=>`
+    <button type="button"
+     class="${i===examSubjectIndex?"":"secondary"}"
+     onclick="changeExamSubject(${i})">
+     ${esc(name)}
+    </button>
+   `).join("")}
+  </div>
+
+  <p class="muted">
+   Question ${examQuestionIndex+1} of ${questions.length}
+   in this subject
+  </p>
+
+  <div class="question">
+   <b>${examQuestionIndex+1}. ${esc(q.text)}</b>
+   ${q.image?`<img class="question-image" src="${q.image}" alt="Question diagram">`:""}
+   ${q.options.map((option,j)=>`
+    <label class="option">
+     <input type="radio" name="currentAnswer" value="${j}"
+      ${String(answers[q.id])===String(j)?"checked":""}
+      onchange="answers['${q.id}']=this.value">
+     ${"ABCD"[j]}. ${esc(option)}
+    </label>
+   `).join("")}
+  </div>
+
+  <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+   <button type="button" class="secondary"
+    onclick="changeExamQuestion(-1)"
+    ${examQuestionIndex===0?"disabled":""}>
+    Previous question
+   </button>
+
+   <button type="button"
+    onclick="changeExamQuestion(1)"
+    ${examQuestionIndex===questions.length-1?"disabled":""}>
+    Next question
+   </button>
+  </div>
+
+  <div class="row" style="justify-content:space-between;flex-wrap:wrap;margin-top:12px">
+   <button type="button" class="secondary"
+    onclick="changeExamSubject(-1)"
+    ${examSubjectIndex===0?"disabled":""}>
+    Previous subject
+   </button>
+
+   <button type="button"
+    onclick="changeExamSubject(1)"
+    ${examSubjectIndex===subjectNames.length-1?"disabled":""}>
+    Next subject
+   </button>
+  </div>
+
+  <button type="button" onclick="submitExam()"
+   style="margin-top:16px">
+   Submit exam
+  </button>
+ </section>`);
+}
+
+function changeExamSubject(index){
+ if(!exam)return;
+
+ const subjectNames = exam.selectedSubjects?.length
+  ? exam.selectedSubjects
+  : [...new Set(exam.questions.map(q=>q.subject || "General"))];
+
+ if(index<0 || index>=subjectNames.length)return;
+
+ examSubjectIndex=index;
+ examQuestionIndex=0;
+ renderExamPage();
+}
+
+function changeExamQuestion(direction){
+ if(!exam)return;
+
+ const subjectNames = exam.selectedSubjects?.length
+  ? exam.selectedSubjects
+  : [...new Set(exam.questions.map(q=>q.subject || "General"))];
+
+ const subject=subjectNames[examSubjectIndex];
+ const questions=exam.questions.filter(q=>
+  (q.subject || "General")===subject
+ );
+
+ const next=examQuestionIndex+direction;
+ if(next<0 || next>=questions.length)return;
+
+ examQuestionIndex=next;
+ renderExamPage();
+}
+
 async function submitExam(auto=false){
  if(!exam)return;
- if(!auto&&!confirm("Submit your exam now?"))return;
+document.documentElement.style.setProperty(
+  "--school-color",
+  /^#[0-9a-fA-F]{6}$/.test(schoolBranding.primaryColor || "")
+    ? schoolBranding.primaryColor
+    : "#2563eb"
+); if(!auto&&!confirm("Submit your exam now?"))return;
 
  const submittedExam=exam;
 

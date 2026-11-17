@@ -17,7 +17,24 @@ const blankDB = () => ({
   users: [],
   questions: [],
   exams: [],
-  attempts: []
+  certificates: [],
+  timetable: [],
+  attempts: [],
+  settings: {
+    schoolName: "MICAN CBT HUB",
+    schoolLogo: "",
+    primaryColor: "#2563eb",
+    academicSession: "",
+    term: "",
+    gradingScale: [
+      { grade: "A", min: 70, max: 100 },
+      { grade: "B", min: 60, max: 69 },
+      { grade: "C", min: 50, max: 59 },
+      { grade: "D", min: 45, max: 49 },
+      { grade: "E", min: 40, max: 44 },
+      { grade: "F", min: 0, max: 39 }
+    ]
+  }
 });
 
 let db;
@@ -27,6 +44,12 @@ try {
 } catch {
   db = blankDB();
 }
+
+// Add missing school settings without replacing saved records.
+db.settings = {
+  ...blankDB().settings,
+  ...(db.settings || {})
+};
 
 function save() {
   const temp = DB_FILE + ".tmp";
@@ -131,6 +154,17 @@ app.get("/api/status", (req, res) => {
   res.json({
     setup: !db.users.some(u => u.role === "admin"),
     user: user ? safeUser(user) : null
+  });
+});
+
+// PUBLIC SCHOOL BRANDING - display information only
+app.get("/api/school-branding", (req, res) => {
+  res.json({
+    schoolName: db.settings.schoolName,
+    primaryColor: db.settings.primaryColor,
+    academicSession: db.settings.academicSession,
+    term: db.settings.term,
+    schoolLogo: db.settings.schoolLogo || ""
   });
 });
 
@@ -240,6 +274,61 @@ app.post("/api/logout", (req, res) => {
 });
 
 // Admin account management
+
+// SCHOOL CUSTOMIZATION - ADMIN ONLY
+app.get("/api/school-settings", requireAdmin, (req, res) => {
+  res.json(db.settings);
+});
+
+app.put("/api/school-settings", requireAdmin, (req, res) => {
+  const body = req.body || {};
+
+  const schoolName = String(body.schoolName || "").trim();
+  const primaryColor = String(body.primaryColor || "").trim();
+  const academicSession = String(body.academicSession || "").trim();
+  const term = String(body.term || "").trim();
+  const schoolLogo = String(body.schoolLogo || "");
+
+  if (!schoolName || schoolName.length > 100) {
+    return res.status(400).json({
+      error: "School name is required and must not exceed 100 characters."
+    });
+  }
+
+  if (!/^#[0-9a-fA-F]{6}$/.test(primaryColor)) {
+    return res.status(400).json({ error: "Invalid school colour." });
+  }
+
+  if (academicSession.length > 30 || term.length > 30) {
+    return res.status(400).json({ error: "Session or term is too long." });
+  }
+
+  if (schoolLogo.length > 2 * 1024 * 1024) {
+    return res.status(400).json({ error: "Logo data is too large." });
+  }
+
+  if (schoolLogo && !/^data:image\/(png|jpeg|webp);base64,/i.test(schoolLogo)) {
+    return res.status(400).json({ error: "Upload a PNG, JPG or WebP image." });
+  }
+
+  db.settings = {
+    ...db.settings,
+    schoolName,
+    schoolLogo,
+    primaryColor,
+    academicSession,
+    term
+  };
+
+  try {
+    save();
+    res.json({ ok: true, settings: db.settings });
+  } catch (error) {
+    console.error("School settings save failed:", error);
+    res.status(500).json({ error: "Could not save school settings." });
+  }
+});
+
 app.get("/api/users", requireAdmin, (req, res) => {
   res.json(db.users.map(safeUser));
 });
@@ -306,6 +395,86 @@ app.delete("/api/users/:id", requireAdmin, (req, res) => {
   save();
   res.json({ ok: true });
 });
+
+// EXAMINATION CERTIFICATES
+app.get("/api/certificates", requireAdmin, (req, res) => {
+  res.json(db.certificates || []);
+});
+
+app.post("/api/certificates", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const student = db.users.find(u =>
+    u.id === String(body.studentId || "") && u.role === "student"
+  );
+
+  const examination = String(body.examination || "").trim();
+  const details = String(body.details || "").trim();
+  const signatory = String(body.signatory || "").trim();
+  const designation = String(body.designation || "").trim();
+  const signatureImage = String(body.signatureImage || "");
+
+  if (!student || !examination || !signatory || !designation) {
+    return res.status(400).json({
+      error: "Select a student and complete the examination and signatory details."
+    });
+  }
+
+  if ([examination, details, signatory, designation].some(v => v.length > 200)) {
+    return res.status(400).json({ error: "Certificate information is too long." });
+  }
+
+  if (signatureImage.length > 2 * 1024 * 1024) {
+    return res.status(400).json({ error: "Signature image is too large." });
+  }
+  if (signatureImage && !/^data:image\/(png|jpeg|webp);base64,/i.test(signatureImage)) {
+    return res.status(400).json({ error: "Signature must be a PNG, JPG or WebP image." });
+  }
+
+  const certificate = {
+    id: makeId("cert"),
+    studentId: student.id,
+    studentName: student.username,
+    className: student.className || "",
+    schoolName: db.settings.schoolName || "MICAN CBT HUB",
+    schoolLogo: db.settings.schoolLogo || "",
+    academicSession: db.settings.academicSession || "",
+    examination,
+    details,
+    signatory,
+    designation,
+    signatureImage,
+    issuedAt: new Date().toISOString()
+  };
+
+  db.certificates = db.certificates || [];
+  db.certificates.push(certificate);
+  save();
+  res.status(201).json(certificate);
+});
+
+app.delete("/api/certificates/:id", requireAdmin, (req, res) => {
+  db.certificates = db.certificates || [];
+  const before = db.certificates.length;
+  db.certificates = db.certificates.filter(c => c.id !== req.params.id);
+
+  if (before === db.certificates.length) {
+    return res.status(404).json({ error: "Certificate not found." });
+  }
+
+  save();
+  res.json({ ok: true });
+});
+
+app.get("/api/student/certificates", requireLogin, (req, res) => {
+  const user = currentUser(req);
+
+  if (!user || user.role !== "student") {
+    return res.status(403).json({ error: "Student account required." });
+  }
+
+  res.json((db.certificates || []).filter(c => c.studentId === user.id));
+});
+
 // Questions
 app.get("/api/questions", requireStaff, (req, res) => {
   const user = currentUser(req);
@@ -431,6 +600,75 @@ app.delete("/api/questions/:id", requireQuestionPermission, (req, res) => {
   db.questions = db.questions.filter(q => q.id !== question.id);
   save();
   res.json({ ok: true });
+});
+
+
+// EXAM TIMETABLE
+app.get("/api/timetable", requireAdmin, (req, res) => {
+  res.json(db.timetable || []);
+});
+
+app.post("/api/timetable", requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const className = String(body.className || "").trim();
+  const subject = String(body.subject || "").trim();
+  const date = String(body.date || "").trim();
+  const startTime = String(body.startTime || "").trim();
+  const duration = Number(body.duration);
+
+  if (!className || !subject || !date || !startTime ||
+      !Number.isInteger(duration) || duration < 1 || duration > 480) {
+    return res.status(400).json({ error: "Complete all timetable fields correctly." });
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) ||
+      Number.isNaN(new Date(date + "T" + startTime).getTime())) {
+    return res.status(400).json({ error: "Invalid examination date or start time." });
+  }
+
+  const item = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    className,
+    subject,
+    date,
+    startTime,
+    duration,
+    createdAt: new Date().toISOString()
+  };
+
+  db.timetable = db.timetable || [];
+  db.timetable.push(item);
+  save();
+  res.status(201).json(item);
+});
+
+app.delete("/api/timetable/:id", requireAdmin, (req, res) => {
+  db.timetable = db.timetable || [];
+  const before = db.timetable.length;
+  db.timetable = db.timetable.filter(item => item.id !== req.params.id);
+
+  if (db.timetable.length === before) {
+    return res.status(404).json({ error: "Timetable entry not found." });
+  }
+
+  save();
+  res.json({ ok: true });
+});
+
+app.get("/api/student/timetable", requireLogin, (req, res) => {
+  const user = currentUser(req);
+
+  if (!user || user.role !== "student") {
+    return res.status(403).json({ error: "Student account required." });
+  }
+
+  const className = String(user.className || "").trim().toLowerCase();
+  const entries = (db.timetable || [])
+    .filter(item => String(item.className || "").trim().toLowerCase() === className)
+    .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+
+  res.json(entries);
 });
 
 // Exams
@@ -926,6 +1164,101 @@ app.post("/api/student/submit", requireLogin, (req, res) => {
 
   res.json(attempt.result);
 });
+// Student report cards - latest attempt per exam
+app.get("/api/student/report-cards", requireLogin, (req, res) => {
+  const user = currentUser(req);
+
+  if (user.role !== "student") {
+    return res.status(403).json({ error: "Student account required." });
+  }
+
+  const latestByExam = new Map();
+
+  db.attempts
+    .filter(a => a.studentId === user.id && a.result)
+    .sort((a, b) =>
+      new Date(b.result.submittedAt) - new Date(a.result.submittedAt)
+    )
+    .forEach(attempt => {
+      if (!latestByExam.has(attempt.examId)) {
+        latestByExam.set(attempt.examId, attempt);
+      }
+    });
+
+  const gradingScale = Array.isArray(db.settings.gradingScale)
+    ? db.settings.gradingScale
+    : [];
+
+  const getGrade = percentage => {
+    const grade = gradingScale.find(g =>
+      percentage >= Number(g.min) && percentage <= Number(g.max)
+    );
+    return grade ? grade.grade : "—";
+  };
+
+  const reports = [...latestByExam.values()].map(attempt => {
+    const result = attempt.result;
+    const className = String(result.className || "Class not recorded");
+
+    const latestClassAttempts = new Map();
+
+    db.attempts
+      .filter(a =>
+        a.examId === attempt.examId &&
+        a.result &&
+        String(a.result.className || "Class not recorded") === className
+      )
+      .sort((a, b) =>
+        new Date(b.result.submittedAt) - new Date(a.result.submittedAt)
+      )
+      .forEach(a => {
+        if (!latestClassAttempts.has(a.studentId)) {
+          latestClassAttempts.set(a.studentId, a);
+        }
+      });
+
+    const classResults = [...latestClassAttempts.values()];
+    const percentage = Number(result.percentage) || 0;
+
+    const classPosition = 1 + classResults.filter(a =>
+      Number(a.result.percentage) > percentage
+    ).length;
+
+    const subjects = Object.entries(result.subjectScores || {}).map(
+      ([subject, scores]) => {
+        const score = Number(scores.score) || 0;
+        const total = Number(scores.total) || 0;
+        const subjectPercentage = Math.round(
+          score / Math.max(1, total) * 100
+        );
+
+        return {
+          subject,
+          score,
+          total,
+          percentage: subjectPercentage,
+          grade: getGrade(subjectPercentage)
+        };
+      }
+    );
+
+    return {
+      ...result,
+      attemptId: attempt.id,
+      subjects,
+      overallGrade: getGrade(percentage),
+      classPosition,
+      classSize: classResults.length
+    };
+  });
+
+  reports.sort((a, b) =>
+    new Date(b.submittedAt) - new Date(a.submittedAt)
+  );
+
+  res.json(reports);
+});
+
 // Student result history
 app.get("/api/student/results", requireLogin, (req, res) => {
   const user = currentUser(req);
